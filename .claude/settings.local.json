@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell($r = Invoke-RestMethod \"https://planetterp.com/api/v1/courses?limit=100&offset=12500\"; Write-Host \"$\\($r.Count\\) results at offset 12500\")",
+      "PowerShell($r = Invoke-RestMethod \"https://planetterp.com/api/v1/courses?limit=100&offset=13000\"; Write-Host \"$\\($r.Count\\) results at offset 13000\")"
+    ]
+  }
+}

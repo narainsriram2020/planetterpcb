@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from backend.planetterp_mcp.planetterp_mcp_server import PLANETTERP_MCP_SERVER
+from .planetterp_server import PLANETTERP_MCP_SERVER
 
 app = FastAPI(title="PlanetTerp MCP Server")
 
@@ -24,6 +24,10 @@ async def invoke_tool(req: InvokeRequest):
     args = req.arguments or {}
     try:
         result = tool_func(**args)
+        # Await coroutines from async tool functions
+        import inspect
+        if inspect.isawaitable(result):
+            result = await result
         # Handle ToolResult object or raw dict
         if hasattr(result, "content"):
             return {"result": result.content}

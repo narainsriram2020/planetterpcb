@@ -1,228 +1,158 @@
-# 🐢 PlanetTerp Chatbot
+# 🐢 PlanetTerp Navigator
 
-A modern, intelligent chatbot for UMD students to get course and professor recommendations. Built with Next.js frontend and FastAPI backend, powered by PlanetTerp data and Google Gemini AI.
+An intelligent chatbot for UMD students powered by real PlanetTerp data and Google Gemini AI. Ask anything about courses, professors, grade distributions, and GenEds — and get concise, data-grounded answers.
+
+---
 
 ## ✨ Features
 
-- **🤖 AI-Powered Chat**: Intelligent responses using Google Gemini AI
-- **📚 Course Search**: Find courses by name, department, or description
-- **👨‍🏫 Professor Ratings**: Get detailed professor information and ratings
-- **📊 Grade Analytics**: View recent grade distributions and course performance
-- **🎨 Modern UI**: Beautiful, responsive interface built with Next.js and Tailwind CSS
-- **⚡ Real-time**: Fast responses with semantic search capabilities
+- **🤖 AI-Powered Chat** — Conversational responses via Google Gemini, grounded in live PlanetTerp data
+- **📚 Semantic Course Search** — Vector-based search finds the most relevant courses for any query
+- **👨‍🏫 Professor Profiles** — Ratings, review highlights, and courses taught
+- **📊 Grade Analytics** — Average GPA and recent grade distribution data
+- **🧠 Multi-Turn Memory** — Gemini keeps context across the whole conversation
+- **⚡ Fallback Formatter** — Structured data summary if Gemini is unavailable
+- **🎨 Dark UI** — Minimal, responsive chat interface with animations
 
-## 🏗️ Project Structure
+---
+
+## 🏗️ Architecture
 
 ```
-planet-terp-chatbot-v2/
-├── backend/                 # FastAPI backend
+planetterpcb/
+├── backend/
 │   ├── app/
-│   │   ├── api/            # API endpoints
-│   │   ├── models/         # Database models
-│   │   ├── schemas/        # Pydantic schemas
-│   │   ├── services/       # Business logic
-│   │   └── main.py         # FastAPI app
-│   ├── planetterp_core.py  # Core PlanetTerp integration
-│   └── requirements.txt    # Python dependencies
-├── frontend/               # Next.js frontend
-│   ├── src/
-│   │   └── app/           # Next.js app directory
-│   └── package.json       # Node.js dependencies
-└── README.md
+│   │   ├── main.py              # Entrypoint — re-exports main_fast.py
+│   │   └── main_fast.py         # FastAPI app: /chat endpoint + Gemini orchestration
+│   ├── planetterp_mcp/
+│   │   ├── planetterp_server.py # MCP tool definitions (search, details, professor)
+│   │   ├── vector_store.py      # FAISS-based semantic search index
+│   │   ├── mcp_http_server.py   # HTTP sidecar exposing MCP tools at port 8001
+│   │   ├── mcp_stub.py          # Lightweight MCPServer stub (no real MCP SDK needed)
+│   │   └── planetterp_core.py   # Raw PlanetTerp API helpers
+│   └── requirements.txt
+├── frontend/
+│   └── src/app/
+│       ├── page.tsx             # Landing page
+│       └── chat/page.tsx        # Chat interface
+├── start.ps1                    # Startup script (runs both backend servers)
+└── env.example                  # Environment variable template
 ```
+
+### Request Flow
+
+```
+Browser → Next.js frontend → POST /chat (port 8000) → main_fast.py
+  → MCP HTTP sidecar (port 8001)
+      → semantic_course_search (FAISS vector search)
+      → get_course_details (PlanetTerp API)
+      → get_professor_profile (PlanetTerp API)
+  → Gemini AI (with data + conversation history)
+  → response with reply + course_details
+```
+
+---
 
 ## 🚀 Quick Start
 
 ### Prerequisites
 
-- Python 3.8+
+- Python 3.10+
 - Node.js 18+
-- Google Gemini API key
+- Google Gemini API key ([get one here](https://aistudio.google.com/))
 
-### Backend Setup
+### 1. Environment Setup
 
-1. **Navigate to backend directory:**
-   ```bash
-   cd backend
-   ```
+Copy the example env file and add your API key:
 
-2. **Install dependencies:**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-3. **Set up environment variables:**
-   ```bash
-   cp env.example .env
-   # Edit .env and add your GEMINI_API_KEY
-   ```
-
-4. **Start the backend server:**
-   ```bash
-   python run.py
-   # or
-   uvicorn app.main:app --host 127.0.0.1 --port 8001 --reload
-   ```
-
-### Frontend Setup
-
-1. **Navigate to frontend directory:**
-   ```bash
-   cd frontend
-   ```
-
-2. **Install dependencies:**
-   ```bash
-   npm install
-   ```
-
-3. **Start the development server:**
-   ```bash
-   npm run dev
-   ```
-
-4. **Open your browser:**
-   Visit [http://localhost:3000](http://localhost:3000)
-
-## 🔧 Configuration
-
-### Environment Variables
-
-Create a `.env` file in the `backend/` directory:
-
-```env
-GEMINI_API_KEY=your_gemini_api_key_here
-DATABASE_URL=sqlite:///./planet_terp_chatbot.db
-REDIS_URL=redis://localhost:6379
-SECRET_KEY=your-secret-key-change-this-in-production
+```bash
+cp env.example .env
+# Edit .env and set GEMINI_API_KEY=your_key_here
 ```
 
-### API Endpoints
+### 2. Backend Dependencies
 
-- `GET /` - Health check
-- `GET /health` - Server status
-- `POST /chat` - Send message to chatbot
+```bash
+cd backend
+pip install -r requirements.txt
+```
 
-## 💬 Usage Examples
+> **Note:** `faiss-cpu` and `sentence-transformers` are required for semantic search. The first startup will download the embedding model (~80 MB).
 
-### Course Information
-- "Tell me about CMSC131"
-- "What are the prerequisites for MATH140?"
-- "Show me computer science courses"
+### 3. Start the Backend
 
-### Professor Recommendations
-- "Who are the best professors for CMSC330?"
-- "Tell me about Professor Nelson Padua-Perez"
-- "Compare professors for MATH241"
+Run **both** the main API and the MCP sidecar together:
 
-### Grade Information
-- "What's the average GPA for CMSC131?"
-- "Show me grade distributions for MATH140"
+```powershell
+# From the project root
+.\start.ps1
+```
 
-## 🛠️ Development
+Or start them manually in separate terminals:
 
-### Backend Development
+```bash
+# Terminal 1 — MCP sidecar (port 8001)
+cd backend
+uvicorn planetterp_mcp.mcp_http_server:app --host 127.0.0.1 --port 8001 --reload
 
-The backend uses FastAPI with the following key components:
+# Terminal 2 — Main API (port 8000)
+cd backend
+uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+```
 
-- **PlanetTerp Integration**: Fetches real-time course and professor data
-- **Semantic Search**: Uses sentence transformers for intelligent course matching
-- **Gemini AI**: Powers the conversational responses
-- **Caching**: Redis-based caching for improved performance
+### 4. Start the Frontend
 
-### Frontend Development
+```bash
+cd frontend
+npm install
+npm run dev
+```
 
-The frontend is built with:
+Open [http://localhost:3000](http://localhost:3000).
 
-- **Next.js 15**: React framework with App Router
-- **TypeScript**: Type-safe development
-- **Tailwind CSS**: Utility-first styling
-- **Lucide React**: Beautiful icons
-- **Framer Motion**: Smooth animations
+---
 
-### Adding New Features
+## ⚙️ Environment Variables
 
-1. **Backend**: Add new endpoints in `backend/app/api/`
-2. **Frontend**: Create new components in `frontend/src/components/`
-3. **Integration**: Update the API calls in the frontend
+| Variable | Default | Description |
+|---|---|---|
+| `GEMINI_API_KEY` | *(required)* | Your Google Gemini API key |
+| `GEMINI_MODEL` | `gemini-2.0-flash-lite` | Gemini model to use |
+| `SENTENCE_TRANSFORMER_MODEL` | `all-MiniLM-L6-v2` | Embedding model for semantic search |
 
-## 📦 Deployment
+Set in a `.env` file in the **project root** (or in `backend/`).
 
-### Backend Deployment
+---
 
-1. **Production Dependencies:**
-   ```bash
-   pip install -r requirements.txt
-   ```
+## 💬 Example Queries
 
-2. **Environment Setup:**
-   - Set production environment variables
-   - Configure database (PostgreSQL recommended)
-   - Set up Redis for caching
+| Category | Examples |
+|---|---|
+| Course Info | "Tell me about CMSC131" · "What's MATH140 like?" |
+| Professor Help | "Who should I take for CMSC330?" · "Tell me about Nelson Padua-Perez" |
+| Grade Data | "What's the average GPA for CMSC216?" · "Is ECON200 grade-friendly?" |
+| GenEds | "Show me easy DSHS GenEds" · "Best science GenEd?" |
+| Recommendations | "What are the most popular CS courses at UMD?" |
 
-3. **Run with Gunicorn:**
-   ```bash
-   gunicorn app.main:app -w 4 -k uvicorn.workers.UvicornWorker
-   ```
+---
 
-### Frontend Deployment
+## 🛠️ Development Notes
 
-1. **Build the application:**
-   ```bash
-   npm run build
-   ```
+- **Semantic search** uses FAISS with `all-MiniLM-L6-v2` embeddings. The index is built from the full PlanetTerp course catalog on first startup and cached in memory for 1 hour.
+- **Gemini fallback** — if Gemini is rate-limited or unavailable, the app returns a structured plain-text summary from PlanetTerp data directly.
+- **Conversation history** — the frontend sends the full message history with each request. The backend includes the last 10 messages in the Gemini prompt.
+- **MCP sidecar** must be running on port 8001 before the main API can serve chat requests. Use `start.ps1` to ensure both start together.
 
-2. **Start production server:**
-   ```bash
-   npm start
-   ```
-
-3. **Deploy to Vercel/Netlify:**
-   - Connect your repository
-   - Set build command: `npm run build`
-   - Set output directory: `.next`
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature/amazing-feature`
-3. Commit your changes: `git commit -m 'Add amazing feature'`
-4. Push to the branch: `git push origin feature/amazing-feature`
-5. Open a Pull Request
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 🙏 Acknowledgments
-
-- [PlanetTerp](https://planetterp.com/) for providing course and professor data
-- [Google Gemini AI](https://ai.google.dev/) for intelligent responses
-- [University of Maryland](https://umd.edu/) for the amazing community
+---
 
 ## 🐛 Troubleshooting
 
-### Common Issues
-
-1. **Backend not starting:**
-   - Check if port 8001 is available
-   - Verify GEMINI_API_KEY is set correctly
-   - Ensure all dependencies are installed
-
-2. **Frontend not connecting to backend:**
-   - Verify backend is running on port 8001
-   - Check CORS settings in backend
-   - Ensure API endpoints are accessible
-
-3. **ML libraries not working:**
-   - The app will work without ML libraries (semantic search disabled)
-   - For full functionality, install PyTorch and sentence-transformers
-
-### Getting Help
-
-- Check the [Issues](https://github.com/yourusername/planet-terp-chatbot/issues) page
-- Create a new issue with detailed error information
-- Join the UMD CS community for support
+| Problem | Fix |
+|---|---|
+| Chat returns no PlanetTerp data | Make sure the MCP sidecar is running on port 8001 |
+| `GEMINI_API_KEY not set` error | Add your key to `.env` in the project root |
+| Slow first response | Normal — the embedding model loads on first startup |
+| Port 8000/8001 already in use | Kill existing processes or change ports in `start.ps1` |
 
 ---
 

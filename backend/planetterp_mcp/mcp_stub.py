@@ -1,3 +1,7 @@
+import asyncio
+import inspect
+
+
 class ToolResult:
     def __init__(self, content):
         self.content = content
@@ -14,17 +18,16 @@ class MCPServer:
         if name not in self.tools:
             raise ValueError(f"Tool '{name}' not found in MCPServer.")
         tool_func = self.tools[name]
-        # Handle both async and sync tool functions
         if callable(tool_func):
-            if hasattr(tool_func, "__call__"):
-                result = tool_func(**arguments) if arguments else tool_func()
-                return result
+            result = tool_func(**arguments) if arguments else tool_func()
+            # Await coroutines from async tool functions
+            if inspect.isawaitable(result):
+                result = await result
+            return result
         return None
 
-
-    def tool(self, **kwargs):  
+    def tool(self, **kwargs):
         def decorator(func):
-            # pull out the common ones if you want
             name = kwargs.get("name") or func.__name__
             self.tools[name] = func
             return func
@@ -44,8 +47,10 @@ class MCPServer:
         print("Available tools:")
         for name in self.list_tools():
             print(" -", name)
+
+
 def Tool(**kwargs):
-        """No-op decorator stub so @Tool(...) works without real MCP SDK."""
-        def decorator(func):
-            return func
-        return decorator
+    """No-op decorator stub so @Tool(...) works without real MCP SDK."""
+    def decorator(func):
+        return func
+    return decorator

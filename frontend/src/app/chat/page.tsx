@@ -4,37 +4,49 @@ import { useState, useEffect, useRef } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import "./chat.css";
 
+interface ChatMessage {
+  role: "user" | "bot";
+  text: string;
+}
+
 export default function ChatPage() {
   const [prompt, setPrompt] = useState("");
-  const [messages, setMessages] = useState<{ role: string; text: string }[]>([]);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(false);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
 
   const BACKEND_URL =
     process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0.0.1:8000/chat";
 
-  const sendMessage = async () => {
-    if (!prompt.trim()) return;
-    setLoading(true);
+  // Capture current prompt to avoid stale-closure bugs
+  const sendMessage = async (overrideText?: string) => {
+    const text = (overrideText ?? prompt).trim();
+    if (!text || loading) return;
 
-    const userMsg = { role: "user", text: prompt };
-    setMessages((prev) => [...prev, userMsg]);
+    setLoading(true);
     setPrompt("");
+
+    const userMsg: ChatMessage = { role: "user", text };
+    const updatedMessages = [...messages, userMsg];
+    setMessages(updatedMessages);
+
+    // Pass the full conversation history so Gemini has context
+    const history = updatedMessages.slice(0, -1); // all but the message we just added
 
     try {
       const res = await fetch(BACKEND_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt }),
+        body: JSON.stringify({ prompt: text, history }),
       });
 
       const data = await res.json();
-      const botMsg = {
+      const botMsg: ChatMessage = {
         role: "bot",
         text: data.reply || "⚠️ No response from chatbot.",
       };
       setMessages((prev) => [...prev, botMsg]);
-    } catch (err: any) {
+    } catch {
       setMessages((prev) => [
         ...prev,
         { role: "bot", text: "❌ Error connecting to backend." },
@@ -67,8 +79,6 @@ export default function ChatPage() {
     visible: { opacity: 1, y: 0, scale: 1 },
   };
 
-  const sanitizeText = (text: string) => text.replace(/\*\*/g, "").replace(/\*/g, "");
-
   return (
     <main className="chat-wrapper">
       <div className="chat-container">
@@ -83,14 +93,15 @@ export default function ChatPage() {
               Ask about courses, professors, or schedules—answers stay grounded in PlanetTerp data.
             </p>
           </div>
-          
+
           <div className="quick-prompts">
             {quickPrompts.map((text) => (
               <button
                 key={text}
-                onClick={() => setPrompt(text)}
+                onClick={() => sendMessage(text)}  // auto-send on chip click
                 className="prompt-chip"
                 type="button"
+                disabled={loading}
               >
                 {text}
               </button>
@@ -125,11 +136,11 @@ export default function ChatPage() {
                 transition={{ duration: 0.3, ease: "easeOut" }}
               >
                 <div className="message-avatar">{msg.role === "user" ? "👤" : "🤖"}</div>
-                <div className="message-bubble">{sanitizeText(msg.text)}</div>
+                <div className="message-bubble">{msg.text}</div>
               </motion.div>
             ))}
           </AnimatePresence>
-          
+
           {loading && (
             <div className="typing-indicator">
               <span />
@@ -154,6 +165,7 @@ export default function ChatPage() {
             placeholder="Ask me about CMSC132, GenEds, or professors..."
             rows={3}
             className="message-input"
+            disabled={loading}
           />
           <button type="submit" disabled={loading || !prompt.trim()} className="send-button">
             <span>{loading ? "Thinking..." : "Send"}</span>

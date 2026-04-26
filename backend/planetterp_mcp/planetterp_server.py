@@ -7,9 +7,9 @@ import time
 from typing import Any, Iterable, Sequence
 
 #from mcp.server.fastmcp import Context, FastMCP
-from backend.planetterp_mcp.mcp_stub import MCPServer, ToolResult
+from .mcp_stub import MCPServer, ToolResult
 
-from backend.planetterp_core import (
+from planetterp_core import (
     extract_course_ids,
     get_course,
     get_course_grades,
@@ -148,8 +148,8 @@ async def tool_extract_course_ids(text: str) -> CourseIdExtraction:
 
 
 @PLANETTERP_MCP_SERVER.tool(
-    name="search_courses",
-    description="Search the PlanetTerp catalog by keyword.",
+    name="semantic_course_search",
+    description="Search the PlanetTerp catalog by keyword using semantic similarity.",
     structured_output=True,
 )
 async def tool_search_courses(query: str, limit: int = 5) -> Sequence[CourseSummary]:

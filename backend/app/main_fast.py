@@ -10,11 +10,11 @@ from typing import Any
 
 
 import httpx
-import google.generativeai as genai
+from google import genai
+from google.genai import errors as google_errors
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from google.api_core import exceptions as google_exceptions
 from pydantic import BaseModel
 
 # === Load environment ===
@@ -24,9 +24,7 @@ if project_env.exists():
     load_dotenv(project_env)
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-GEMINI_MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
+GEMINI_MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
 
 MCP_BASE_URL = "http://127.0.0.1:8001/mcp"
 
@@ -40,7 +38,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-gemini_model = None
+gemini_client = None
 MAX_GEMINI_RETRIES = 3
 INITIAL_RETRY_DELAY = 1.5
 MAX_COURSE_DETAIL_LIMIT = 10
@@ -61,8 +59,14 @@ POPULAR_COURSE_IDS = [
 
 
 # === Schema ===
+class HistoryMessage(BaseModel):
+    role: str  # "user" or "bot"
+    text: str
+
+
 class Query(BaseModel):
     prompt: str
+    history: list[HistoryMessage] = []
 
 
 # === Helper: MCP HTTP call ===
@@ -84,17 +88,17 @@ async def call_planetterp_tool(name: str, arguments: dict[str, Any] | None = Non
 # === Startup ===
 @app.on_event("startup")
 async def startup() -> None:
-    global gemini_model
-    print("🚀 Starting PlanetTerp Chatbot backend...")
+    global gemini_client
+    print("Starting PlanetTerp Chatbot backend...")
 
     if GEMINI_API_KEY:
         try:
-            gemini_model = genai.GenerativeModel(GEMINI_MODEL_NAME)
-            print("✅ Gemini model loaded")
+            gemini_client = genai.Client(api_key=GEMINI_API_KEY)
+            print("Gemini client ready, model:", GEMINI_MODEL_NAME)
         except Exception as exc:
-            print(f"❌ Gemini model failed: {exc}")
+            print(f"Gemini client failed: {exc}")
 
-    print("✅ Ready to connect to MCP at", MCP_BASE_URL)
+    print("Ready to connect to MCP at", MCP_BASE_URL)
 
 
 # === Routes ===
@@ -122,10 +126,44 @@ async def chat(req: Query) -> dict[str, Any]:
 
     start_time = time.time()
     prompt = req.prompt.strip()
+
+    # Build conversation history string (shared by all paths)
+    history_text = ""
+    if req.history:
+        recent = req.history[-10:]
+        history_lines = [
+            f"{'Student' if m.role == 'user' else 'Terpy'}: {m.text}"
+            for m in recent
+        ]
+        history_text = "\n".join(history_lines)
+
+    # --- Casual query shortcut: skip course search entirely ---
+    if _is_casual_query(prompt):
+        reply = None
+        if gemini_client:
+            casual_prompt = f"""You are Terpy, a friendly UMD student assistant who knows everything about courses and professors.
+The student just sent a casual message — not a question about courses. Reply warmly and naturally in 1-2 sentences, like a friendly classmate.
+Let them know you're here to help with course questions, professor recommendations, grade data, and GenEds at UMD.
+
+Conversation history:
+{history_text if history_text else "(start of conversation)"}
+
+Student: {prompt}
+Terpy:"""
+            try:
+                reply = await _call_gemini_with_retry(casual_prompt)
+            except Exception as exc:
+                print(f"⚠️ Gemini failed on casual query: {exc}")
+
+        if not reply:
+            reply = "Hey! I'm Terpy, your UMD course assistant. Ask me about any class, professor, grade distributions, or GenEd requirements and I'll hook you up with real PlanetTerp data."
+
+        return {"reply": reply, "course_details": [], "processing_time": f"{time.time() - start_time:.2f}s"}
+
+    # --- 1. Semantic search via MCP ---
     search_limit = _determine_search_limit(prompt)
     popularity_request = _is_popularity_request(prompt)
 
-    # --- 1️⃣ Semantic search via MCP ---
     search_hits = await call_planetterp_tool(
         "semantic_course_search",
         {"query": prompt, "limit": search_limit},
@@ -142,7 +180,6 @@ async def chat(req: Query) -> dict[str, Any]:
             if norm and norm not in seen_ids:
                 augmented_hits.append({"course_id": norm})
                 seen_ids.add(norm)
-        # keep manual matches ahead of semantic hits
         search_hits = augmented_hits + search_hits
     if popularity_request:
         search_hits = _inject_popular_hits(search_hits)
@@ -152,7 +189,7 @@ async def chat(req: Query) -> dict[str, Any]:
     if professor_name:
         professor_profile = await _fetch_professor_profile(professor_name)
 
-    # --- 2️⃣ Fetch details for top courses ---
+    # --- 2. Fetch details for top courses ---
     detail_limit = _determine_detail_limit(search_limit)
     course_details = []
     if (search_hits or popularity_request) and detail_limit:
@@ -192,52 +229,45 @@ async def chat(req: Query) -> dict[str, Any]:
         "professor_query": professor_name,
     }
 
-    # --- 3️⃣ Try Gemini with retry ---
+    # --- 3. Try Gemini ---
     reply = None
-    if gemini_model:
-        full_prompt = f"""
-            You are "Terpy", a friendly and knowledgeable University of Maryland course assistant.
-            Your job is to answer questions about UMD classes and professors using the data below.
+    if gemini_client:
+        has_data = bool(course_details or professor_profile or search_hits)
+        data_section = json.dumps(payload, indent=2) if has_data else "(No PlanetTerp data found for this query.)"
 
-            --- CONTEXT RULES ---
-            1. Use the PlanetTerp data faithfully — never make up facts or fake statistics.
-            2. When the data includes courses, summarize key info:
-            - course_id and full title
-            - short 1–2 line description
-            - mention average GPA if available
-            - mention 1–2 notable professors or trends (e.g., “challenging but fair grading”)
-            3. When the data includes professors, include:
-            - full name, department, rating, and emoji if available
-            - what they teach or are best known for
-            - a short insight like “students say...” or “most reviews mention...”
-            4. If multiple results exist, group or compare briefly.
-            5. If a course or professor isn't found, say that clearly and encourage checking PlanetTerp.
+        full_prompt = f"""You are Terpy, a knowledgeable UMD student assistant powered by PlanetTerp data.
 
-            --- STYLE GUIDE ---
-            - Write conversationally, like a UMD student talking to another.
-            - Stay concise (under 200 words total).
-            - Avoid markdown, lists, or headings — just natural sentences.
-            - Be confident and direct; avoid filler like “I think” or “it seems”.
-            - Never say “according to the data below”; integrate it naturally.
+RULES:
+- Only state facts that appear in the PlanetTerp data below. Never invent GPAs, ratings, or professor names.
+- If the data is empty or doesn't answer the question, say so honestly and suggest searching planetterp.com directly.
+- Mention average GPA when available — students care a lot about this.
+- For professor questions, include their rating, what students say about them, and which courses they teach.
+- For course questions, mention the title, a brief description, average GPA, and who teaches it.
+- If multiple courses or professors match, briefly compare them.
 
-            --- INPUT DATA ---
-            User question: {prompt}
+STYLE:
+- Sound like a helpful UMD upperclassman texting a friend — casual, direct, no fluff.
+- One paragraph, under 180 words. No bullet points, no headers, no markdown.
+- Don't start with "Sure!" or "Great question!" — just answer.
+- Don't say "according to PlanetTerp" — just state the facts naturally.
 
-            PlanetTerp Data (JSON):
-            {json.dumps(payload, indent=2)}
+CONVERSATION SO FAR:
+{history_text if history_text else "(new conversation)"}
 
-            Now, respond in one clean, well-written paragraph that best answers the user question.
-            """
+STUDENT'S QUESTION: {prompt}
+
+PLANETTERP DATA:
+{data_section}
+
+Terpy's response:"""
 
         try:
             reply = await _call_gemini_with_retry(full_prompt)
-        except google_exceptions.ResourceExhausted:
-            reply = None
         except Exception as exc:
-            print(f"⚠️ Gemini failed: {exc}")
+            print(f"Gemini failed: {exc}")
             reply = None
 
-    # --- 4️⃣ Fallback if Gemini failed ---
+    # --- 4. Fallback ---
     if not reply:
         reply = _format_planetterp_summary(payload, prompt)
 
@@ -256,32 +286,33 @@ async def _call_gemini_with_retry(full_prompt: str) -> str:
     delay = INITIAL_RETRY_DELAY
     last_exc: Exception | None = None
 
+    def _sync_generate(prompt: str) -> str | None:
+        response = gemini_client.models.generate_content(
+            model=GEMINI_MODEL_NAME,
+            contents=prompt,
+            config={"temperature": 0.7, "max_output_tokens": 500},
+        )
+        return response.text.strip() if response and response.text else None
+
     for attempt in range(MAX_GEMINI_RETRIES):
         try:
-            response = gemini_model.generate_content(
-                [{"role": "user", "parts": [full_prompt]}],
-                generation_config={"temperature": 0.5, "max_output_tokens": 400},
-            )
-            if response and response.text:
-                return response.text.strip()
-        except google_exceptions.ResourceExhausted as exc:
-            last_exc = exc
-            print(f"⚠️ Gemini busy (attempt {attempt+1}/{MAX_GEMINI_RETRIES}). Retrying in {delay}s...")
-            await asyncio.sleep(delay)
-            delay *= 2
+            result = await asyncio.to_thread(_sync_generate, full_prompt)
+            if result:
+                return result
+        except google_errors.ClientError as exc:
+            if "quota" in str(exc).lower() or "429" in str(exc):
+                last_exc = exc
+                print(f"Gemini busy (attempt {attempt+1}/{MAX_GEMINI_RETRIES}). Retrying in {delay}s...")
+                await asyncio.sleep(delay)
+                delay *= 2
+            else:
+                last_exc = exc
+                print(f"Gemini client error: {exc}")
+                break
         except Exception as e:
             last_exc = e
-            print(f"❌ Gemini error: {e}")
+            print(f"Gemini error: {e}")
             break
-
-    # optional: fallback to a smaller model
-    try:
-        alt_model = genai.GenerativeModel("gemini-1.5-flash")
-        response = alt_model.generate_content(full_prompt)
-        if response and response.text:
-            return response.text.strip()
-    except Exception:
-        pass
 
     raise last_exc or RuntimeError("Gemini failed after retries.")
 
@@ -455,6 +486,34 @@ def _determine_detail_limit(search_limit: int) -> int:
     if search_limit >= 12:
         return 6
     return min(MAX_COURSE_DETAIL_LIMIT, 6)
+
+
+def _is_casual_query(prompt: str) -> bool:
+    """Return True if the prompt is casual chit-chat with no course/professor intent."""
+    normalized = prompt.lower().strip()
+    # Short greetings / social messages
+    casual_patterns = [
+        r"^(hey|hi|hello|sup|yo|what'?s up|howdy|hiya)\b",
+        r"^how (are|r) (you|u)\b",
+        r"^(good|bad|ok|okay|fine|great|cool|nice|awesome|thanks|thank you|thx|ty)\b",
+        r"^(lol|lmao|haha|bruh|bro|gg)\b",
+        r"^(what can you do|help me|what do you do)\??$",
+        r"^(who are you|what are you)\??$",
+    ]
+    if any(re.match(p, normalized) for p in casual_patterns):
+        return True
+    # No course/professor-related words at all AND very short
+    course_signals = [
+        "course", "class", "professor", "prof", "gpa", "grade", "credit",
+        "gened", "gen ed", "cmsc", "math", "engl", "econ", "psyc", "inst",
+        "bmgt", "prereq", "syllabus", "lecture", "umd", "terp", "semester",
+    ]
+    words = normalized.split()
+    if len(words) <= 6 and not any(sig in normalized for sig in course_signals):
+        # Also check no course ID pattern
+        if not re.search(r"\b[a-z]{3,4}\s*\d{3}\b", normalized):
+            return True
+    return False
 
 
 def _is_popularity_request(prompt: str) -> bool:
