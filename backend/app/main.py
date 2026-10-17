@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
@@ -26,10 +27,15 @@ logger = logging.getLogger(__name__)
 
 MAX_HISTORY_MESSAGES = 12
 # Per-client chat limit so a public deployment can't drain the Gemini quota.
-CHAT_RATE_LIMIT = int(os.getenv("CHAT_RATE_LIMIT", "30"))  # requests per window; 0 disables
+CHAT_RATE_LIMIT = int(os.getenv("CHAT_RATE_LIMIT", "15"))  # requests per window; 0 disables
 CHAT_RATE_WINDOW_SECONDS = 600
+# Opening questions (no history) are cached so popular ones, like the suggestion
+# buttons, don't spend Gemini's free-tier quota on every click.
+ANSWER_CACHE_TTL_SECONDS = 6 * 60 * 60
+ANSWER_CACHE_MAX_ENTRIES = 500
 
 _recent_requests: dict[str, deque[float]] = defaultdict(deque)
+_answer_cache: dict[str, tuple[float, list[dict[str, Any]], agent.AgentReply]] = {}
 
 mcp_http_app = planetterp_server.streamable_http_app()
 
@@ -142,15 +148,37 @@ def _parse(req: ChatRequest) -> tuple[str, list[dict[str, str]]]:
     return prompt, [m.model_dump() for m in req.history[-MAX_HISTORY_MESSAGES:]]
 
 
+def _cache_key(prompt: str) -> str:
+    return re.sub(r"\s+", " ", prompt.lower()).strip(" ?!.")
+
+
 async def _run_turn(prompt: str, history: list[dict[str, str]], emit: agent.Emit) -> agent.AgentReply:
-    """One chat turn with the search-only fallback. Raises ChatUnavailableError on failure."""
+    """One chat turn with the search-only fallback. Raises ChatUnavailableError on failure.
+
+    Opening questions are answered from a short-lived cache when possible; a cache
+    hit replays the original events (steps, cards) through `emit`.
+    """
+    key = _cache_key(prompt) if not history else None
+    cached = _answer_cache.get(key) if key else None
+    if cached and time.monotonic() - cached[0] < ANSWER_CACHE_TTL_SECONDS:
+        for event in cached[1]:
+            emit(event)
+        logger.info("chat answered from cache: %r", key)
+        return cached[2]
+
+    events: list[dict[str, Any]] = []
+
+    def record(event: dict[str, Any]) -> None:
+        events.append(event)
+        emit(event)
+
     start = time.perf_counter()
     try:
-        result = await agent.answer(prompt, history, emit)
+        result = await agent.answer(prompt, history, record)
     except agent.AgentUnavailableError as exc:
         logger.warning("Agent unavailable, using fallback: %s", exc)
         try:
-            result = await agent.fallback_answer(prompt, emit)
+            result = await agent.fallback_answer(prompt, record)
         except Exception as fallback_exc:
             logger.exception("Fallback failed")
             raise ChatUnavailableError(503, "TerpGuide is temporarily unavailable.") from fallback_exc
@@ -162,6 +190,10 @@ async def _run_turn(prompt: str, history: list[dict[str, str]], emit: agent.Emit
         time.perf_counter() - start,
         [call.name for call in result.tool_calls],
     )
+    if key and not result.degraded:
+        _answer_cache[key] = (time.monotonic(), events, result)
+        while len(_answer_cache) > ANSWER_CACHE_MAX_ENTRIES:
+            _answer_cache.pop(next(iter(_answer_cache)))
     return result
 
 

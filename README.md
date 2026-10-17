@@ -148,7 +148,7 @@ Backend on [Render](https://render.com) (free web service), frontend on [Vercel]
 3. **CORS.** Set `FRONTEND_ORIGINS` on Render to your Vercel URL (e.g. `https://terpguide.vercel.app`) and redeploy.
 4. **Keep-alive.** Add a repository variable `BACKEND_URL` (Settings → Secrets and variables → Actions → Variables) so [`keepalive.yml`](.github/workflows/keepalive.yml) pings the API daily and keeps the free Qdrant cluster active.
 
-Free-tier notes: Render sleeps after 15 minutes idle (the first request after that takes ~30–60s), chat is rate-limited per client (`CHAT_RATE_LIMIT`, default 30 per 10 minutes), and Gemini's free tier has its own daily caps.
+Free-tier notes: Render sleeps after 15 minutes idle (the first request after that takes ~30–60s), chat is rate-limited per client (`CHAT_RATE_LIMIT`, default 15 per 10 minutes), opening questions are cached for 6 hours to save Gemini quota, and Gemini's free tier has its own daily caps.
 
 ---
 

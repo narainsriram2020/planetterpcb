@@ -215,7 +215,7 @@ export default function ChatPage() {
           )}
         </form>
         <p className={styles.disclaimer}>
-          Data from PlanetTerp. Not affiliated with the University of Maryland. Double-check before you register.
+          Data from PlanetTerp. Not affiliated with the University of Maryland. Questions are answered by Google Gemini, so skip personal info, and double-check before you register.
         </p>
       </footer>
     </div>

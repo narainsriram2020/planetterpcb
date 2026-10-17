@@ -78,6 +78,7 @@ class ToolCallRecord:
 class AgentReply:
     text: str
     tool_calls: list[ToolCallRecord] = field(default_factory=list)
+    degraded: bool = False  # True for the search-only fallback answer
 
 
 class AgentUnavailableError(RuntimeError):
@@ -281,4 +282,5 @@ async def fallback_answer(prompt: str, emit: Emit = _ignore) -> AgentReply:
     return AgentReply(
         text=text,
         tool_calls=[ToolCallRecord(name="search_courses", arguments={"query": prompt}, ok=ok)],
+        degraded=True,
     )
