@@ -121,9 +121,21 @@ Set these in `.env` in the project root (or in `backend/`).
 { "prompt": "Who should I take for CMSC330?", "history": [{ "role": "user", "text": "..." }, { "role": "bot", "text": "..." }] }
 ```
 
-Returns `{ "reply": "...", "tools_used": [{ "name": "get_grade_distribution", "arguments": {...}, "ok": true }], "processing_time": "4.80s" }`.
+Returns `{ "reply": "...", "tools_used": [{ "name": "get_grade_distribution", "arguments": {...}, "ok": true }], "cards": [...], "processing_time": "4.80s" }`. `cards` are display-ready summaries of the data the agent fetched (grade distributions, professors, courses, search results).
+
+`POST /chat/stream` takes the same body and streams newline-delimited JSON events as the agent works — this is what the web UI uses:
+
+```
+{"type": "tool_start", "id": 0, "name": "get_grade_distribution", "arguments": {"course_id": "MATH141"}}
+{"type": "tool_end", "id": 0, "name": "get_grade_distribution", "ok": true}
+{"type": "card", "card": {"kind": "grades", "course_id": "MATH141", ...}}
+{"type": "answer", "text": "..."}
+{"type": "done", "processing_time": "6.90s"}
+```
 
 `GET /health` reports the model, vector store status, and registered MCP tools.
+
+The frontend calls the API at `NEXT_PUBLIC_API_URL` (default `http://127.0.0.1:8000`).
 
 ---
 

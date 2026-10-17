@@ -16,7 +16,7 @@ import os
 import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Callable
 
 from google import genai
 from google.genai import errors as genai_errors
@@ -27,6 +27,8 @@ from mcp.shared.memory import create_connected_server_and_client_session
 
 from planetterp_mcp import config  # noqa: F401 - loads .env before the getenv calls below
 from planetterp_mcp import mcp as planetterp_server
+
+from .cards import card_from_tool
 
 logger = logging.getLogger(__name__)
 
@@ -46,16 +48,22 @@ backed by PlanetTerp data on courses, professors, and grades.
 How to work:
 - For any factual question about courses, professors, GPAs, ratings, or reviews, call the \
 tools first. Never invent course ids, GPAs, ratings, names, or review content.
+- Only recommend courses and professors that appear in tool results. If the tools find \
+nothing that fits, say so plainly; don't fill the gap with courses from memory.
 - "Who should I take for X?": call get_grade_distribution for X, then get_professor for \
 the 2-3 most relevant recent professors, and weigh GPA, rating, and what reviews say.
+- Questions about teaching style ("chill", "clear", "tough grader") need get_professor \
+ratings and reviews, not just GPAs.
 - "Easy / interesting classes about Y": use search_courses, then compare average GPAs.
-- If a tool errors or returns nothing useful, say so plainly and suggest planetterp.com.
+- If a tool errors or returns nothing useful, say so and suggest planetterp.com.
 - Small talk needs no tools: reply briefly and mention what you can help with.
 
 Style:
 - Sound like a helpful UMD upperclassman: casual, direct, no filler openers.
-- Keep answers under about 180 words. Plain text only, no markdown symbols \
-(no **, #, or tables). Short paragraphs or simple "-" lists are fine.
+- The app shows the data you fetched as cards under your answer (grade charts, professor \
+ratings, course details), so lead with the recommendation and the few numbers that justify it.
+- Keep answers under about 150 words. You may use **bold** for course ids and professor \
+names and short "-" lists. No headings or tables.
 - Give GPAs to two decimals and ratings out of 5."""
 
 
@@ -179,8 +187,34 @@ async def _generate(contents: list[types.Content], config: types.GenerateContent
     raise AgentUnavailableError("Gemini failed after retries.")
 
 
-async def answer(prompt: str, history: list[dict[str, str]] | None = None) -> AgentReply:
-    """Run one chat turn: let Gemini call MCP tools until it produces a final answer."""
+Emit = Callable[[dict[str, Any]], None]
+
+
+def _ignore(_: dict[str, Any]) -> None:
+    pass
+
+
+async def _call_tool_with_events(
+    session: ClientSession, call: types.FunctionCall, call_id: int, emit: Emit
+) -> tuple[dict[str, Any], bool]:
+    arguments = dict(call.args or {})
+    emit({"type": "tool_start", "id": call_id, "name": call.name, "arguments": arguments})
+    payload, ok = await _call_tool(session, call)
+    emit({"type": "tool_end", "id": call_id, "name": call.name, "ok": ok})
+    card = card_from_tool(call.name, arguments, payload, ok)
+    if card:
+        emit({"type": "card", "card": card})
+    return payload, ok
+
+
+async def answer(
+    prompt: str, history: list[dict[str, str]] | None = None, emit: Emit = _ignore
+) -> AgentReply:
+    """Run one chat turn: let Gemini call MCP tools until it produces a final answer.
+
+    Progress (tool calls starting/finishing, data cards) is reported through `emit`
+    so the streaming endpoint can show it live.
+    """
     records: list[ToolCallRecord] = []
     contents = _history_to_contents(history or [])
     contents.append(types.Content(role="user", parts=[types.Part(text=prompt)]))
@@ -215,7 +249,11 @@ async def answer(prompt: str, history: list[dict[str, str]] | None = None) -> Ag
 
             # Keep the model turn intact (it carries thought signatures for Gemini 3).
             contents.append(response.candidates[0].content)
-            results = await asyncio.gather(*(_call_tool(session, call) for call in calls))
+            first_id = len(records)
+            results = await asyncio.gather(*(
+                _call_tool_with_events(session, call, first_id + i, emit)
+                for i, call in enumerate(calls)
+            ))
             parts = []
             for call, (payload, ok) in zip(calls, results):
                 records.append(ToolCallRecord(name=call.name, arguments=dict(call.args or {}), ok=ok))
@@ -225,11 +263,12 @@ async def answer(prompt: str, history: list[dict[str, str]] | None = None) -> Ag
     raise AgentUnavailableError("Agent did not produce an answer.")
 
 
-async def fallback_answer(prompt: str) -> AgentReply:
+async def fallback_answer(prompt: str, emit: Emit = _ignore) -> AgentReply:
     """Used when Gemini is unavailable: return raw search matches so the user still gets data."""
+    call = types.FunctionCall(name="search_courses", args={"query": prompt, "limit": 5})
     async with open_mcp_session() as session:
-        result = await session.call_tool("search_courses", {"query": prompt, "limit": 5})
-    matches = (result.structuredContent or {}).get("results", []) if not result.isError else []
+        payload, ok = await _call_tool_with_events(session, call, 0, emit)
+    matches = payload.get("results", []) if ok else []
     if not matches:
         text = "TerpAdvisor's AI is temporarily unavailable. Try again in a minute, or search planetterp.com directly."
     else:
@@ -237,9 +276,9 @@ async def fallback_answer(prompt: str) -> AgentReply:
         for course in matches:
             gpa = course.get("average_gpa")
             gpa_text = f" (avg GPA {gpa:.2f})" if isinstance(gpa, (int, float)) else ""
-            lines.append(f"- {course.get('course_id')}: {course.get('title') or 'Untitled'}{gpa_text}")
+            lines.append(f"- **{course.get('course_id')}**: {course.get('title') or 'Untitled'}{gpa_text}")
         text = "\n".join(lines)
     return AgentReply(
         text=text,
-        tool_calls=[ToolCallRecord(name="search_courses", arguments={"query": prompt}, ok=not result.isError)],
+        tool_calls=[ToolCallRecord(name="search_courses", arguments={"query": prompt}, ok=ok)],
     )

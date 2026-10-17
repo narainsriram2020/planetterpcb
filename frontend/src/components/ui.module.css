@@ -1,0 +1,67 @@
+/* Shared small controls */
+
+.iconButton {
+  display: inline-grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.iconButton:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  text-decoration: none;
+  transition: background 0.15s, border-color 0.15s, transform 0.15s;
+}
+
+.button:hover {
+  background: var(--surface-2);
+  border-color: var(--border-strong);
+}
+
+.buttonPrimary {
+  composes: button;
+  background: var(--red);
+  border-color: var(--red);
+  color: #fff;
+}
+
+.buttonPrimary:hover {
+  background: var(--red-hover);
+  border-color: var(--red-hover);
+}
+
+.code {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: 6px;
+  background: var(--red-soft);
+  color: var(--red-ink);
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
