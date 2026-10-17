@@ -34,7 +34,6 @@ export default function RootLayout({
     <html lang="en" className={`${geist.variable} ${geistMono.variable} ${bricolage.variable}`} suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
-        <link rel="icon" href="/logo.svg" type="image/svg+xml" />
       </head>
       <body suppressHydrationWarning>{children}</body>
     </html>
