@@ -4,6 +4,7 @@ import type { GradesCard as GradesCardData } from "@/types/chat";
 import { GradesCard } from "@/components/cards/GradesCard";
 import { Logo, LogoMark } from "@/components/Logo";
 import { Markdown } from "@/components/Markdown";
+import { McpConnect } from "@/components/McpConnect";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import ui from "@/components/ui.module.css";
 import styles from "./landing.module.css";
@@ -46,14 +47,8 @@ const TOOLS = [
   { name: "get_professor", detail: "Rating and the latest reviews" },
 ];
 
-const MCP_CONFIG = `{
-  "mcpServers": {
-    "planetterp": {
-      "command": "py",
-      "args": ["-m", "planetterp_mcp.server"]
-    }
-  }
-}`;
+// The deployed API serves the MCP server at /mcp/ (trailing slash avoids a redirect).
+const MCP_URL = `${(process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000").replace(/\/$/, "")}/mcp/`;
 
 export default function LandingPage() {
   return (
@@ -142,8 +137,8 @@ export default function LandingPage() {
           <span className={styles.eyebrow}><Database size={14} /> Under the hood</span>
           <h2 className={styles.sectionTitle}>A real MCP server you can plug into any AI client</h2>
           <p className={styles.sectionSub}>
-            The same five tools TerpGuide uses are exposed over the Model Context Protocol, at <code>/mcp</code> over
-            HTTP or over stdio. Point Claude Desktop, Cursor, or the MCP Inspector at it.
+            The same five tools TerpGuide uses are a public Model Context Protocol server. Add it to Cursor,
+            Claude, or VS Code and your own AI assistant can look up UMD courses, grades, and professors.
           </p>
           <ul className={styles.toolList}>
             {TOOLS.map((t) => (
@@ -154,10 +149,7 @@ export default function LandingPage() {
             ))}
           </ul>
         </div>
-        <pre className={styles.codeBlock} aria-label="Claude Desktop configuration">
-          <span className={styles.codeLabel}>claude_desktop_config.json</span>
-          <code>{MCP_CONFIG}</code>
-        </pre>
+        <McpConnect url={MCP_URL} />
       </section>
 
       <section className={styles.finalCta}>

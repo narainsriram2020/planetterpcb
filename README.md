@@ -93,6 +93,8 @@ cd ../frontend && npm install && npm run dev      # http://localhost:3000
 
 Or run it standalone over HTTP: `py -m planetterp_mcp.server --http` (serves `http://127.0.0.1:8001/mcp`).
 
+The deployed server is public at `https://terpadvisor-api-9glv.onrender.com/mcp/` (streamable HTTP, no auth) — the landing page has copy-paste setup for Cursor, Claude Code, VS Code, and the Claude app.
+
 ---
 
 ## ⚙️ Environment Variables

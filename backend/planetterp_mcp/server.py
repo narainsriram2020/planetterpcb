@@ -40,7 +40,7 @@ def _transport_security() -> TransportSecuritySettings | None:
 
 
 mcp = FastMCP(
-    "PlanetTerp",
+    "TerpGuide",
     instructions=(
         "Data about University of Maryland (UMD) courses, professors, and grade "
         "distributions from PlanetTerp. Course ids look like CMSC330 or MATH140."

@@ -308,29 +308,6 @@
   gap: 10px;
 }
 
-.codeBlock {
-  position: relative;
-  margin: 0;
-  padding: 44px 22px 22px;
-  border-radius: var(--radius);
-  background: #161412;
-  color: #f1ece6;
-  font-family: var(--font-mono);
-  font-size: 13px;
-  line-height: 1.6;
-  overflow-x: auto;
-  box-shadow: var(--shadow-lg);
-  border-top: 3px solid var(--gold);
-}
-
-.codeLabel {
-  position: absolute;
-  top: 14px;
-  left: 22px;
-  font-size: 11.5px;
-  color: #9a9087;
-}
-
 .finalCta {
   display: flex;
   flex-direction: column;
