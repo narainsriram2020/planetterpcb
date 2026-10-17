@@ -1,279 +1,124 @@
-"""Qdrant-backed semantic search for PlanetTerp data.
+"""Semantic search over the PlanetTerp index stored in Qdrant.
 
-Uses cloud Qdrant when QDRANT_URL + QDRANT_API_KEY are set,
-otherwise falls back to a local on-disk instance.
+Uses Qdrant Cloud when QDRANT_URL + QDRANT_API_KEY are set, otherwise an
+embedded on-disk instance at QDRANT_PATH. The index is built by
+scripts/scrape_and_index.py.
 """
 
 from __future__ import annotations
 
 import asyncio
-import os
-import re
-from pathlib import Path
+import atexit
+import logging
+import uuid
+from concurrent.futures import ThreadPoolExecutor
+from functools import lru_cache
 from typing import Any
 
-from dotenv import load_dotenv
+from fastembed import TextEmbedding
+from qdrant_client import QdrantClient
+from qdrant_client.models import FieldCondition, Filter, MatchValue
 
-load_dotenv()
-root_env = Path(__file__).resolve().parents[2] / ".env"
-if root_env.exists():
-    load_dotenv(root_env)
+from . import config
 
-try:
-    from qdrant_client import QdrantClient
-    from qdrant_client.models import (
-        Distance,
-        FieldCondition,
-        Filter,
-        MatchValue,
-        PointStruct,
-        VectorParams,
-    )
-    QDRANT_AVAILABLE = True
-except ImportError:
-    QdrantClient = None
-    QDRANT_AVAILABLE = False
+logger = logging.getLogger(__name__)
 
-from planetterp_core import load_model
-
-COLLECTION_NAME = "planetterp"
-QDRANT_URL = os.getenv("QDRANT_URL")
-QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
-LOCAL_STORAGE_PATH = Path(os.getenv("PLANETTERP_QDRANT_PATH", ".planetterp_qdrant")).resolve()
-DISABLE_VECTORS = os.getenv("PLANETTERP_DISABLE_VECTORS", "").lower() in {"1", "true", "yes"}
-COURSE_CODE_PATTERN = re.compile(r"\b([A-Z]{4})\s*-?(\d{3}[A-Z]?)\b", re.IGNORECASE)
-
-_vector_lock = asyncio.Lock()
-_client: QdrantClient | None = None
-_embedder = None
-_use_cloud = bool(QDRANT_URL and QDRANT_API_KEY)
+# Qdrant's embedded mode and the ONNX embedder are not designed for concurrent
+# use from many threads, so every blocking call goes through one worker.
+_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="vector-store")
+_ready: bool | None = None
 
 
-def _get_client() -> QdrantClient | None:
-    global _client
-    if _client is not None:
-        return _client
-    if not QDRANT_AVAILABLE:
-        return None
-    if _use_cloud:
-        print(f"Connecting to cloud Qdrant at {QDRANT_URL}...")
-        _client = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY)
+def course_point_id(course_id: str) -> str:
+    return str(uuid.uuid5(uuid.NAMESPACE_DNS, f"course:{course_id.upper()}"))
+
+
+def professor_point_id(name: str) -> str:
+    return str(uuid.uuid5(uuid.NAMESPACE_DNS, f"professor:{name.lower()}"))
+
+
+@lru_cache(maxsize=1)
+def get_client() -> QdrantClient:
+    if config.use_cloud_qdrant():
+        client = QdrantClient(url=config.QDRANT_URL, api_key=config.QDRANT_API_KEY, timeout=10)
     else:
-        LOCAL_STORAGE_PATH.mkdir(parents=True, exist_ok=True)
-        _client = QdrantClient(path=str(LOCAL_STORAGE_PATH))
-    return _client
+        config.QDRANT_PATH.mkdir(parents=True, exist_ok=True)
+        client = QdrantClient(path=str(config.QDRANT_PATH))
+    # Close explicitly; the local client's __del__ fails noisily during interpreter shutdown.
+    atexit.register(client.close)
+    return client
 
 
-def _normalize_code(value: str | None) -> str:
-    return "".join(ch for ch in (value or "").upper() if ch.isalnum())
+@lru_cache(maxsize=1)
+def get_embedder() -> TextEmbedding:
+    return TextEmbedding(config.EMBED_MODEL)
 
 
-def _extract_course_code(text: str) -> str | None:
-    match = COURSE_CODE_PATTERN.search(text or "")
-    if not match:
-        return None
-    return _normalize_code("".join(match.groups()))
+def embed(texts: list[str]) -> list[list[float]]:
+    return [vector.tolist() for vector in get_embedder().embed(texts)]
 
 
-async def _embed_texts(texts: list[str]) -> list[list[float]]:
-    if not texts or _embedder is None:
-        return []
-
-    def _run() -> list[list[float]]:
-        return _embedder.encode(
-            texts,
-            convert_to_numpy=True,
-            normalize_embeddings=True,
-            show_progress_bar=False,
-        ).tolist()
-
-    return await asyncio.to_thread(_run)
+def describe_backend() -> str:
+    return "qdrant-cloud" if config.use_cloud_qdrant() else f"qdrant-local ({config.QDRANT_PATH})"
 
 
-async def ensure_vector_store(courses: list[dict[str, Any]], force_rebuild: bool = False) -> bool:
-    """
-    Cloud mode: just verify the collection exists — the scraper populates it.
-    Local mode: build and populate the collection from the course list.
-    """
-    if DISABLE_VECTORS:
-        return False
-    if not QDRANT_AVAILABLE:
-        print("qdrant-client not installed; skipping semantic index.")
-        return False
-
-    global _embedder
-
-    async with _vector_lock:
-        client = _get_client()
-        if client is None:
+def _check_ready() -> bool:
+    try:
+        client = get_client()
+        if not client.collection_exists(config.COLLECTION_NAME):
+            logger.warning(
+                "Qdrant collection '%s' not found on %s; run scripts/scrape_and_index.py",
+                config.COLLECTION_NAME,
+                describe_backend(),
+            )
             return False
+        count = client.count(config.COLLECTION_NAME, exact=False).count
+        get_embedder()
+        logger.info("Vector store ready: %s points on %s", count, describe_backend())
+        return count > 0
+    except Exception as exc:  # noqa: BLE001 - any failure means "fall back"
+        logger.warning("Vector store unavailable on %s: %s", describe_backend(), exc)
+        return False
 
-        if _embedder is None:
-            _embedder = await asyncio.to_thread(load_model)
-            if _embedder is None:
-                print("SentenceTransformer unavailable; skipping semantic index.")
-                return False
 
-        # Cloud mode: just confirm the collection exists
-        if _use_cloud:
-            try:
-                info = client.get_collection(COLLECTION_NAME)
-                print(f"Cloud Qdrant ready: '{COLLECTION_NAME}' has {info.points_count} points.")
-                return True
-            except Exception as e:
-                print(f"Cloud Qdrant collection '{COLLECTION_NAME}' not found: {e}")
-                print("Run: py scripts/scrape_and_index.py")
-                return False
-
-        # Local mode: build collection from courses if needed
-        needs_rebuild = force_rebuild
-        if not needs_rebuild:
-            try:
-                info = client.get_collection(COLLECTION_NAME)
-                if info.points_count < len(courses):
-                    needs_rebuild = True
-            except Exception:
-                needs_rebuild = True
-
-        if needs_rebuild:
-            dim = _embedder.get_sentence_embedding_dimension()
-            try:
-                client.delete_collection(COLLECTION_NAME)
-            except Exception:
-                pass
-            client.create_collection(
-                COLLECTION_NAME,
-                vectors_config=VectorParams(size=dim, distance=Distance.COSINE),
-            )
-            await _populate_local(client, courses)
-            print(f"Local Qdrant ready with {len(courses)} courses.")
-
+async def is_ready(refresh: bool = False) -> bool:
+    """Whether semantic search can be used. The result is cached once it succeeds."""
+    global _ready
+    if _ready and not refresh:
         return True
+    _ready = await asyncio.get_running_loop().run_in_executor(_executor, _check_ready)
+    return _ready
 
 
-async def _populate_local(client: QdrantClient, courses: list[dict[str, Any]]) -> None:
-    batch_size = 64
-    for start in range(0, len(courses), batch_size):
-        batch = courses[start : start + batch_size]
-        texts = [
-            " ".join(filter(None, [
-                course.get("course_id") or course.get("name") or "",
-                course.get("title") or "",
-                course.get("description") or "",
-            ]))
-            for course in batch
-        ]
-        vectors = await _embed_texts(texts)
-        points = []
-        for course, vector in zip(batch, vectors):
-            cid = (course.get("course_id") or course.get("name") or "").upper()
-            if not cid:
-                continue
-            points.append(PointStruct(
-                id=cid,
-                vector=vector,
-                payload={
-                    "course_id": cid,
-                    "normalized_code": _normalize_code(cid),
-                    "title": course.get("title"),
-                    "description": course.get("description"),
-                    "department": course.get("department"),
-                    "credits": course.get("credits"),
-                },
-            ))
-        if points:
-            client.upsert(collection_name=COLLECTION_NAME, points=points)
+def _search(query: str, limit: int, query_filter: Filter) -> list[dict[str, Any]]:
+    vector = embed([query])[0]
+    response = get_client().query_points(
+        collection_name=config.COLLECTION_NAME,
+        query=vector,
+        query_filter=query_filter,
+        limit=limit,
+        with_payload=True,
+    )
+    return [{**(point.payload or {}), "score": round(point.score, 4)} for point in response.points]
 
 
-async def semantic_course_search(query: str, limit: int = 5) -> list[dict[str, Any]]:
-    if not query or not query.strip() or DISABLE_VECTORS:
-        return []
-
-    client = _get_client()
-    if client is None or _embedder is None:
-        return []
-
-    matches: list[dict[str, Any]] = []
-    seen: set[str] = set()
-
-    # Exact course code match first
-    normalized_code = _extract_course_code(query)
-    if normalized_code:
-        try:
-            exact_filter = Filter(must=[
-                FieldCondition(key="normalized_code", match=MatchValue(value=normalized_code))
-            ])
-            points, _ = client.scroll(
-                collection_name=COLLECTION_NAME,
-                scroll_filter=exact_filter,
-                limit=limit,
-                with_payload=True,
-            )
-            for point in points:
-                payload = dict(point.payload or {})
-                cid = (payload.get("course_id") or "").upper()
-                if not cid or cid in seen:
-                    continue
-                payload["score"] = 1.0
-                matches.append(payload)
-                seen.add(cid)
-                if len(matches) >= limit:
-                    return matches
-        except Exception as e:
-            print(f"Qdrant exact-match failed: {e}")
-
-    # Semantic search
-    vectors = await _embed_texts([query])
-    if not vectors:
-        return matches
-
-    try:
-        results = client.search(
-            collection_name=COLLECTION_NAME,
-            query_vector=vectors[0],
-            limit=limit,
-            with_payload=True,
-        )
-        for hit in results:
-            payload = dict(hit.payload or {})
-            # Skip professor entries for course search
-            if payload.get("type") == "professor":
-                continue
-            cid = (payload.get("course_id") or "").upper()
-            if not cid or cid in seen:
-                continue
-            payload["score"] = float(hit.score)
-            matches.append(payload)
-            seen.add(cid)
-            if len(matches) >= limit:
-                break
-    except Exception as e:
-        print(f"Qdrant semantic search failed: {e}")
-
-    return matches
+async def search_courses(query: str, limit: int = 8, department: str | None = None) -> list[dict[str, Any]]:
+    # Older indexes only tag professor points, so exclude those rather than
+    # requiring type == "course".
+    must = []
+    if department:
+        must.append(FieldCondition(key="department", match=MatchValue(value=department.upper())))
+    query_filter = Filter(
+        must=must,
+        must_not=[FieldCondition(key="type", match=MatchValue(value="professor"))],
+    )
+    return await asyncio.get_running_loop().run_in_executor(
+        _executor, _search, query, limit, query_filter
+    )
 
 
-async def semantic_professor_search(query: str, limit: int = 3) -> list[dict[str, Any]]:
-    """Search for professors by name or description."""
-    client = _get_client()
-    if client is None or _embedder is None:
-        return []
-
-    vectors = await _embed_texts([query])
-    if not vectors:
-        return []
-
-    try:
-        results = client.search(
-            collection_name=COLLECTION_NAME,
-            query_vector=vectors[0],
-            query_filter=Filter(must=[
-                FieldCondition(key="type", match=MatchValue(value="professor"))
-            ]),
-            limit=limit,
-            with_payload=True,
-        )
-        return [dict(hit.payload or {}) for hit in results]
-    except Exception as e:
-        print(f"Qdrant professor search failed: {e}")
-        return []
+async def search_professors(query: str, limit: int = 5) -> list[dict[str, Any]]:
+    query_filter = Filter(must=[FieldCondition(key="type", match=MatchValue(value="professor"))])
+    return await asyncio.get_running_loop().run_in_executor(
+        _executor, _search, query, limit, query_filter
+    )

@@ -1,24 +1,20 @@
-"""Quick check: how much data is in the Qdrant collection."""
-import os
+"""Quick check: what's in the Qdrant collection (cloud or local)."""
+
+import sys
 from pathlib import Path
-from dotenv import load_dotenv
-from qdrant_client import QdrantClient
 
-load_dotenv()
-root_env = Path(__file__).resolve().parents[2] / ".env"
-if root_env.exists():
-    load_dotenv(root_env)
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-client = QdrantClient(url=os.getenv("QDRANT_URL"), api_key=os.getenv("QDRANT_API_KEY"))
+from planetterp_mcp import config  # noqa: E402
+from planetterp_mcp.vector_store import describe_backend, get_client  # noqa: E402
 
-print("Collections:")
+client = get_client()
+print(f"Backend: {describe_backend()}")
 for c in client.get_collections().collections:
-    info = client.get_collection(c.name)
-    print(f"  {c.name}: {info.points_count} points (status: {info.status})")
+    print(f"  {c.name}: {client.count(c.name).count} points")
 
-# Sample a few points
-try:
-    points, _ = client.scroll(collection_name="planetterp", limit=3, with_payload=True)
+if client.collection_exists(config.COLLECTION_NAME):
+    points, _ = client.scroll(collection_name=config.COLLECTION_NAME, limit=3, with_payload=True)
     print("\nSample points:")
     for p in points:
         payload = p.payload or {}
@@ -26,5 +22,5 @@ try:
             print(f"  [PROF] {payload.get('name')} — rating {payload.get('average_rating')}")
         else:
             print(f"  [COURSE] {payload.get('course_id')} — {payload.get('title')} (GPA: {payload.get('average_gpa')})")
-except Exception as e:
-    print(f"Could not sample: {e}")
+
+client.close()

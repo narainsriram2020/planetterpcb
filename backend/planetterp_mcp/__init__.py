@@ -1,5 +1,5 @@
-"""PlanetTerp Model Context Protocol server integration."""
+"""PlanetTerp Model Context Protocol server."""
 
-from .planetterp_server import PLANETTERP_MCP_SERVER, ensure_course_cache_warmed
+from .server import mcp
 
-__all__ = ["PLANETTERP_MCP_SERVER", "ensure_course_cache_warmed"]
+__all__ = ["mcp"]

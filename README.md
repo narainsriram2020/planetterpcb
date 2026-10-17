@@ -1,114 +1,97 @@
-# 🐢 PlanetTerp Navigator
+# 🐢 TerpAdvisor — AI course advisor for UMD
 
-An intelligent chatbot for UMD students powered by real PlanetTerp data and Google Gemini AI. Ask anything about courses, professors, grade distributions, and GenEds — and get concise, data-grounded answers.
+TerpAdvisor is a chatbot for UMD students that answers questions about courses, professors, and grade distributions using real PlanetTerp data. A Gemini agent decides which tools to call on a **Model Context Protocol (MCP)** server, which serves live PlanetTerp data and semantic search over a Qdrant vector index.
 
 ---
 
 ## ✨ Features
 
-- **🤖 AI-Powered Chat** — Conversational responses via Google Gemini, grounded in live PlanetTerp data
-- **📚 Semantic Course Search** — Vector-based search finds the most relevant courses for any query
-- **👨‍🏫 Professor Profiles** — Ratings, review highlights, and courses taught
-- **📊 Grade Analytics** — Average GPA and recent grade distribution data
-- **🧠 Multi-Turn Memory** — Gemini keeps context across the whole conversation
-- **⚡ Fallback Formatter** — Structured data summary if Gemini is unavailable
-- **🎨 Dark UI** — Minimal, responsive chat interface with animations
+- **Tool-using agent** — Gemini picks which MCP tools to call (and in what order) to answer each question, then writes a grounded reply
+- **Real MCP server** — built on the official MCP Python SDK; usable by any MCP client (Claude Desktop, Cursor, MCP Inspector) over stdio or streamable HTTP
+- **Semantic search** — course and professor embeddings (`all-MiniLM-L6-v2` via fastembed) in Qdrant, enriched with GPAs, professor ratings, and review snippets
+- **Grade analytics** — per-professor GPA breakdowns over recent semesters for "who should I take?" questions
+- **Multi-turn memory** — follow-ups like "what about him specifically?" use the conversation history
+- **Graceful degradation** — falls back to plain search results if Gemini is unavailable, and to PlanetTerp's name search if the vector index is
 
 ---
 
 ## 🏗️ Architecture
 
 ```
-planetterpcb/
-├── backend/
-│   ├── app/
-│   │   ├── main.py              # Entrypoint — re-exports main_fast.py
-│   │   └── main_fast.py         # FastAPI app: /chat endpoint + Gemini orchestration
-│   ├── planetterp_mcp/
-│   │   ├── planetterp_server.py # MCP tool definitions (search, details, professor)
-│   │   ├── vector_store.py      # FAISS-based semantic search index
-│   │   ├── mcp_http_server.py   # HTTP sidecar exposing MCP tools at port 8001
-│   │   ├── mcp_stub.py          # Lightweight MCPServer stub (no real MCP SDK needed)
-│   │   └── planetterp_core.py   # Raw PlanetTerp API helpers
-│   └── requirements.txt
-├── frontend/
-│   └── src/app/
-│       ├── page.tsx             # Landing page
-│       └── chat/page.tsx        # Chat interface
-├── start.ps1                    # Startup script (runs both backend servers)
-└── env.example                  # Environment variable template
+Browser (Next.js) ──POST /chat──► FastAPI (app/main.py)
+                                     │
+                                     ▼
+                               Gemini agent (app/agent.py)
+                                 │  MCP client: list_tools / call_tool
+                                 ▼
+                     PlanetTerp MCP server (planetterp_mcp/server.py)
+                       ├─ search_courses ─────────┐
+                       ├─ search_professors ──────┴─► Qdrant (semantic index)
+                       ├─ get_course ─────────────┐
+                       ├─ get_grade_distribution ─┼─► PlanetTerp API (cached)
+                       └─ get_professor ──────────┘
+
+External MCP clients ──streamable HTTP──► /mcp/   (same server)
 ```
 
-### Request Flow
+The agent talks to the MCP server over an in-memory transport by default, or over streamable HTTP when `MCP_SERVER_URL` is set. Each turn, Gemini gets the tool schemas from `list_tools`, issues function calls (in parallel when independent), and gets the results back until it can answer (max 6 rounds).
 
 ```
-Browser → Next.js frontend → POST /chat (port 8000) → main_fast.py
-  → MCP HTTP sidecar (port 8001)
-      → semantic_course_search (FAISS vector search)
-      → get_course_details (PlanetTerp API)
-      → get_professor_profile (PlanetTerp API)
-  → Gemini AI (with data + conversation history)
-  → response with reply + course_details
+backend/
+├── app/
+│   ├── main.py              # FastAPI: /chat, /health, mounts MCP at /mcp
+│   └── agent.py             # Gemini tool-calling loop over an MCP ClientSession
+├── planetterp_mcp/
+│   ├── server.py            # FastMCP server + the 5 tools
+│   ├── planetterp_api.py    # Async PlanetTerp client with TTL cache
+│   ├── vector_store.py      # Qdrant (cloud or local) + fastembed search
+│   └── config.py            # Env settings
+└── scripts/
+    ├── scrape_and_index.py  # Build the Qdrant index from PlanetTerp
+    └── check_qdrant.py      # Inspect the index
+frontend/                    # Next.js chat UI
 ```
 
 ---
 
 ## 🚀 Quick Start
 
-### Prerequisites
-
-- Python 3.10+
-- Node.js 18+
-- Google Gemini API key ([get one here](https://aistudio.google.com/))
-
-### 1. Environment Setup
-
-Copy the example env file and add your API key:
+**Prerequisites:** Python 3.11+, Node.js 18+, a [Gemini API key](https://aistudio.google.com/).
 
 ```bash
-cp env.example .env
-# Edit .env and set GEMINI_API_KEY=your_key_here
-```
+# 1. Configure
+cp env.example .env          # set GEMINI_API_KEY (and Qdrant Cloud creds if you have them)
 
-### 2. Backend Dependencies
-
-```bash
+# 2. Install
 cd backend
 pip install -r requirements.txt
+
+# 3. Build the search index (no Qdrant creds -> local store in backend/.qdrant)
+py scripts/scrape_and_index.py --departments CMSC,MATH,ASTR   # quick
+py scripts/scrape_and_index.py                                # full catalog
+
+# 4. Run the API (also serves MCP at /mcp/)
+py -m uvicorn app.main:app --port 8000 --reload   # or .\start.ps1 from the repo root
+
+# 5. Run the frontend
+cd ../frontend && npm install && npm run dev      # http://localhost:3000
 ```
 
-> **Note:** `faiss-cpu` and `sentence-transformers` are required for semantic search. The first startup will download the embedding model (~80 MB).
+### Use the MCP server from Claude Desktop
 
-### 3. Start the Backend
-
-Run **both** the main API and the MCP sidecar together:
-
-```powershell
-# From the project root
-.\start.ps1
+```json
+{
+  "mcpServers": {
+    "planetterp": {
+      "command": "py",
+      "args": ["-m", "planetterp_mcp.server"],
+      "env": { "PYTHONPATH": "C:/path/to/planetterpcb/backend" }
+    }
+  }
+}
 ```
 
-Or start them manually in separate terminals:
-
-```bash
-# Terminal 1 — MCP sidecar (port 8001)
-cd backend
-uvicorn planetterp_mcp.mcp_http_server:app --host 127.0.0.1 --port 8001 --reload
-
-# Terminal 2 — Main API (port 8000)
-cd backend
-uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
-```
-
-### 4. Start the Frontend
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-Open [http://localhost:3000](http://localhost:3000).
+Or run it standalone over HTTP: `py -m planetterp_mcp.server --http` (serves `http://127.0.0.1:8001/mcp`).
 
 ---
 
@@ -116,32 +99,31 @@ Open [http://localhost:3000](http://localhost:3000).
 
 | Variable | Default | Description |
 |---|---|---|
-| `GEMINI_API_KEY` | *(required)* | Your Google Gemini API key |
-| `GEMINI_MODEL` | `gemini-2.0-flash-lite` | Gemini model to use |
-| `SENTENCE_TRANSFORMER_MODEL` | `all-MiniLM-L6-v2` | Embedding model for semantic search |
+| `GEMINI_API_KEY` | *(required)* | Gemini API key |
+| `GEMINI_MODEL` | `gemini-flash-lite-latest` | Gemini model. Free-tier `gemini-flash-latest` is limited to 20 requests/day |
+| `GEMINI_THINKING_LEVEL` | `low` | Thinking level; empty for models without one |
+| `QDRANT_URL` / `QDRANT_API_KEY` | — | Qdrant Cloud; if unset, uses the local store |
+| `QDRANT_MODE` | `auto` | `local` forces the on-disk store |
+| `QDRANT_PATH` | `backend/.qdrant` | Local store location |
+| `MCP_SERVER_URL` | — | Use a remote MCP server instead of the in-process one |
+| `MCP_ALLOWED_HOSTS` | localhost | Hostnames allowed to call `/mcp` when deployed (`*` disables the check) |
+| `FRONTEND_ORIGINS` | `*` | CORS origins for the chat API |
 
-Set in a `.env` file in the **project root** (or in `backend/`).
-
----
-
-## 💬 Example Queries
-
-| Category | Examples |
-|---|---|
-| Course Info | "Tell me about CMSC131" · "What's MATH140 like?" |
-| Professor Help | "Who should I take for CMSC330?" · "Tell me about Nelson Padua-Perez" |
-| Grade Data | "What's the average GPA for CMSC216?" · "Is ECON200 grade-friendly?" |
-| GenEds | "Show me easy DSHS GenEds" · "Best science GenEd?" |
-| Recommendations | "What are the most popular CS courses at UMD?" |
+Set these in `.env` in the project root (or in `backend/`).
 
 ---
 
-## 🛠️ Development Notes
+## 🔌 API
 
-- **Semantic search** uses FAISS with `all-MiniLM-L6-v2` embeddings. The index is built from the full PlanetTerp course catalog on first startup and cached in memory for 1 hour.
-- **Gemini fallback** — if Gemini is rate-limited or unavailable, the app returns a structured plain-text summary from PlanetTerp data directly.
-- **Conversation history** — the frontend sends the full message history with each request. The backend includes the last 10 messages in the Gemini prompt.
-- **MCP sidecar** must be running on port 8001 before the main API can serve chat requests. Use `start.ps1` to ensure both start together.
+`POST /chat`
+
+```json
+{ "prompt": "Who should I take for CMSC330?", "history": [{ "role": "user", "text": "..." }, { "role": "bot", "text": "..." }] }
+```
+
+Returns `{ "reply": "...", "tools_used": [{ "name": "get_grade_distribution", "arguments": {...}, "ok": true }], "processing_time": "4.80s" }`.
+
+`GET /health` reports the model, vector store status, and registered MCP tools.
 
 ---
 
@@ -149,10 +131,9 @@ Set in a `.env` file in the **project root** (or in `backend/`).
 
 | Problem | Fix |
 |---|---|
-| Chat returns no PlanetTerp data | Make sure the MCP sidecar is running on port 8001 |
-| `GEMINI_API_KEY not set` error | Add your key to `.env` in the project root |
-| Slow first response | Normal — the embedding model loads on first startup |
-| Port 8000/8001 already in use | Kill existing processes or change ports in `start.ps1` |
+| Replies start with "TerpAdvisor's AI is temporarily unavailable" | Gemini quota or outage — check the server log for the error; try `gemini-flash-lite-latest` or enable billing |
+| `/health` shows `vector_store_ready: false` | Build the index with `scripts/scrape_and_index.py`, or check your Qdrant Cloud cluster isn't suspended |
+| Local Qdrant "already accessed by another instance" | The on-disk store allows one process at a time — stop the API before re-indexing |
 
 ---
 

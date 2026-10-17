@@ -6,3 +6,5 @@ __pycache__/
 .env
 .env.local
 .env.*.local
+# Local Qdrant index built by backend/scripts/scrape_and_index.py
+backend/.qdrant/
