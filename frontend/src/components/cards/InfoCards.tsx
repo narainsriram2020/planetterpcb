@@ -11,16 +11,27 @@ import styles from "./cards.module.css";
 
 const MAX_COURSE_CHIPS = 6;
 
+const STAR_SIZE = 16;
+
+/** Five stars, each filled by its own share of the rating (3.15 → 3 full, 15% of the 4th). */
 function Stars({ rating }: { rating: number }) {
-  const pct = Math.max(0, Math.min(rating / 5, 1)) * 100;
+  const clamped = Math.max(0, Math.min(rating, 5));
   return (
-    <span className={styles.stars} aria-hidden="true">
-      <span className={styles.starsBase}>
-        {[0, 1, 2, 3, 4].map((i) => <Star key={i} size={15} />)}
-      </span>
-      <span className={styles.starsFill} style={{ width: `${pct}%` }}>
-        {[0, 1, 2, 3, 4].map((i) => <Star key={i} size={15} fill="currentColor" />)}
-      </span>
+    <span className={styles.stars} role="img" aria-label={`Rated ${rating.toFixed(2)} out of 5`}>
+      {[0, 1, 2, 3, 4].map((i) => {
+        const fill = Math.max(0, Math.min(clamped - i, 1));
+        return (
+          <span key={i} className={styles.star}>
+            <Star size={STAR_SIZE} fill="currentColor" strokeWidth={1.5} className={styles.starEmpty} />
+            {fill > 0 && (
+              // Fixed-size star clipped by its wrapper, so partial fills never shrink the icon.
+              <span className={styles.starFill} style={{ width: `${fill * 100}%` }}>
+                <Star size={STAR_SIZE} fill="currentColor" strokeWidth={1.5} />
+              </span>
+            )}
+          </span>
+        );
+      })}
     </span>
   );
 }
