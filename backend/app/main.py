@@ -7,10 +7,11 @@ import json
 import logging
 import os
 import time
+from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -24,6 +25,11 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 logger = logging.getLogger(__name__)
 
 MAX_HISTORY_MESSAGES = 12
+# Per-client chat limit so a public deployment can't drain the Gemini quota.
+CHAT_RATE_LIMIT = int(os.getenv("CHAT_RATE_LIMIT", "30"))  # requests per window; 0 disables
+CHAT_RATE_WINDOW_SECONDS = 600
+
+_recent_requests: dict[str, deque[float]] = defaultdict(deque)
 
 mcp_http_app = planetterp_server.streamable_http_app()
 
@@ -89,16 +95,44 @@ async def root() -> dict[str, str]:
 
 
 @app.get("/health")
-async def health() -> dict[str, Any]:
+async def health(deep: bool = False) -> dict[str, Any]:
+    """`?deep=true` re-checks Qdrant, which also counts as activity for free-tier clusters."""
     tools = await planetterp_server.list_tools()
     return {
         "status": "ok",
         "gemini_configured": bool(agent.GEMINI_API_KEY),
         "gemini_model": agent.GEMINI_MODEL,
         "vector_store": vector_store.describe_backend(),
-        "vector_store_ready": await vector_store.is_ready(),
+        "vector_store_ready": await vector_store.is_ready(refresh=deep),
         "mcp_tools": [tool.name for tool in tools],
     }
+
+
+def _client_id(request: Request) -> str:
+    # Behind a proxy (Render, Cloud Run) the rightmost X-Forwarded-For entry is
+    # the one the proxy itself added, so clients can't spoof it.
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[-1].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def _check_rate_limit(request: Request) -> None:
+    if CHAT_RATE_LIMIT <= 0:
+        return
+    now = time.monotonic()
+    if len(_recent_requests) > 10_000:  # drop idle clients so memory stays bounded
+        for key in [k for k, v in _recent_requests.items() if not v or now - v[-1] > CHAT_RATE_WINDOW_SECONDS]:
+            del _recent_requests[key]
+    hits = _recent_requests[_client_id(request)]
+    while hits and now - hits[0] > CHAT_RATE_WINDOW_SECONDS:
+        hits.popleft()
+    if len(hits) >= CHAT_RATE_LIMIT:
+        raise HTTPException(
+            status_code=429,
+            detail="You're asking faster than TerpAdvisor can keep up. Give it a few minutes and try again.",
+        )
+    hits.append(now)
 
 
 def _parse(req: ChatRequest) -> tuple[str, list[dict[str, str]]]:
@@ -132,7 +166,8 @@ async def _run_turn(prompt: str, history: list[dict[str, str]], emit: agent.Emit
 
 
 @app.post("/chat", response_model=ChatResponse)
-async def chat(req: ChatRequest) -> ChatResponse:
+async def chat(req: ChatRequest, request: Request) -> ChatResponse:
+    _check_rate_limit(request)
     prompt, history = _parse(req)
     start = time.perf_counter()
     cards: dict[str, dict[str, Any]] = {}
@@ -154,12 +189,13 @@ async def chat(req: ChatRequest) -> ChatResponse:
 
 
 @app.post("/chat/stream")
-async def chat_stream(req: ChatRequest) -> StreamingResponse:
+async def chat_stream(req: ChatRequest, request: Request) -> StreamingResponse:
     """Stream a chat turn as newline-delimited JSON events:
 
     tool_start / tool_end (agent progress), card (data to display),
     answer (final text), error, and done.
     """
+    _check_rate_limit(request)
     prompt, history = _parse(req)
     queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
     start = time.perf_counter()

@@ -1,0 +1,19 @@
+# Pings the deployed API once a day. The deep health check queries Qdrant, so the
+# free-tier cluster sees regular activity and isn't suspended or deleted.
+# Set the repository variable BACKEND_URL (Settings -> Secrets and variables ->
+# Actions -> Variables), e.g. https://terpadvisor-api.onrender.com
+name: Keep services warm
+
+on:
+  schedule:
+    - cron: "17 14 * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    if: ${{ vars.BACKEND_URL != '' }}
+    steps:
+      - name: Deep health check
+        # A sleeping free Render service can take a minute to wake up.
+        run: curl --fail --silent --show-error --max-time 120 --retry 3 --retry-delay 20 "${{ vars.BACKEND_URL }}/health?deep=true"

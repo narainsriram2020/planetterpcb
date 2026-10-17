@@ -1,0 +1,34 @@
+# Render Blueprint for the TerpAdvisor API (FastAPI + MCP server).
+# Render dashboard -> New -> Blueprint -> pick this repo. Secrets marked
+# `sync: false` are entered in the dashboard, never committed.
+services:
+  - type: web
+    name: terpadvisor-api
+    runtime: python
+    plan: free
+    rootDir: backend
+    # Download the embedding model at build time so cold starts don't fetch it.
+    buildCommand: >-
+      pip install -r requirements.txt &&
+      python -c "from fastembed import TextEmbedding; TextEmbedding('sentence-transformers/all-MiniLM-L6-v2')"
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.13.5
+      - key: FASTEMBED_CACHE_PATH
+        value: .fastembed_cache
+      - key: GEMINI_MODEL
+        value: gemini-flash-lite-latest
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: QDRANT_URL
+        sync: false
+      - key: QDRANT_API_KEY
+        sync: false
+      # Your Vercel URL, e.g. https://terpadvisor.vercel.app (comma-separate several)
+      - key: FRONTEND_ORIGINS
+        sync: false
+      # The MCP endpoint is public and read-only, so skip localhost-only host checks.
+      - key: MCP_ALLOWED_HOSTS
+        value: "*"

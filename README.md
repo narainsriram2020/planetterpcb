@@ -139,6 +139,19 @@ The frontend calls the API at `NEXT_PUBLIC_API_URL` (default `http://127.0.0.1:8
 
 ---
 
+## ☁️ Deployment
+
+Backend on [Render](https://render.com) (free web service), frontend on [Vercel](https://vercel.com), data in Qdrant Cloud.
+
+1. **Backend (Render).** New → Blueprint → select this repo; it reads [`render.yaml`](render.yaml). Fill in `GEMINI_API_KEY`, `QDRANT_URL`, `QDRANT_API_KEY`, and leave `FRONTEND_ORIGINS` for step 3. Check `https://<service>.onrender.com/health`.
+2. **Frontend (Vercel).** Add New → Project → this repo, set **Root Directory** to `frontend`, and add `NEXT_PUBLIC_API_URL=https://<service>.onrender.com`.
+3. **CORS.** Set `FRONTEND_ORIGINS` on Render to your Vercel URL (e.g. `https://terpadvisor.vercel.app`) and redeploy.
+4. **Keep-alive.** Add a repository variable `BACKEND_URL` (Settings → Secrets and variables → Actions → Variables) so [`keepalive.yml`](.github/workflows/keepalive.yml) pings the API daily and keeps the free Qdrant cluster active.
+
+Free-tier notes: Render sleeps after 15 minutes idle (the first request after that takes ~30–60s), chat is rate-limited per client (`CHAT_RATE_LIMIT`, default 30 per 10 minutes), and Gemini's free tier has its own daily caps.
+
+---
+
 ## 🐛 Troubleshooting
 
 | Problem | Fix |

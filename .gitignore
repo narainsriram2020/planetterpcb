@@ -8,3 +8,6 @@ __pycache__/
 .env.*.local
 # Local Qdrant index built by backend/scripts/scrape_and_index.py
 backend/.qdrant/
+
+# Embedding model downloaded at build time (Render) or first run
+backend/.fastembed_cache/
