@@ -24,7 +24,7 @@ export function Message({ message }: { message: ChatMessage }) {
       <div className={styles.botBody}>
         <ToolSteps steps={message.steps} working={working} />
         {working && !message.text && (
-          <div className={styles.thinking} aria-label="TerpAdvisor is thinking">
+          <div className={styles.thinking} aria-label="TerpGuide is thinking">
             <span />
             <span />
             <span />

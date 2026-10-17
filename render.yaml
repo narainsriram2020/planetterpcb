@@ -1,4 +1,4 @@
-# Render Blueprint for the TerpAdvisor API (FastAPI + MCP server).
+# Render Blueprint for the TerpGuide API (FastAPI + MCP server).
 # Render dashboard -> New -> Blueprint -> pick this repo. Secrets marked
 # `sync: false` are entered in the dashboard, never committed.
 services:
@@ -26,7 +26,7 @@ services:
         sync: false
       - key: QDRANT_API_KEY
         sync: false
-      # Your Vercel URL, e.g. https://terpadvisor.vercel.app (comma-separate several)
+      # Your Vercel URL, e.g. https://terpguide.vercel.app (comma-separate several)
       - key: FRONTEND_ORIGINS
         sync: false
       # The MCP endpoint is public and read-only, so skip localhost-only host checks.

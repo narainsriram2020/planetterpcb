@@ -1,4 +1,4 @@
-"""FastAPI app: the TerpAdvisor chat endpoint plus the PlanetTerp MCP server mounted at /mcp."""
+"""FastAPI app: the TerpGuide chat endpoint plus the PlanetTerp MCP server mounted at /mcp."""
 
 from __future__ import annotations
 
@@ -39,13 +39,13 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     # Load the embedding model and check Qdrant in the background so startup stays fast.
     warmup = asyncio.create_task(vector_store.is_ready())
     async with planetterp_server.session_manager.run():
-        logger.info("TerpAdvisor ready (model=%s, vectors=%s)", agent.GEMINI_MODEL, vector_store.describe_backend())
+        logger.info("TerpGuide ready (model=%s, vectors=%s)", agent.GEMINI_MODEL, vector_store.describe_backend())
         yield
     warmup.cancel()
     await planetterp_api.close()
 
 
-app = FastAPI(title="TerpAdvisor", lifespan=lifespan)
+app = FastAPI(title="TerpGuide", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[o.strip() for o in os.getenv("FRONTEND_ORIGINS", "*").split(",") if o.strip()],
@@ -87,7 +87,7 @@ class ChatUnavailableError(RuntimeError):
 @app.get("/")
 async def root() -> dict[str, str]:
     return {
-        "message": "TerpAdvisor API",
+        "message": "TerpGuide API",
         "chat": "POST /chat",
         "chat_stream": "POST /chat/stream (NDJSON events)",
         "mcp": "/mcp/",
@@ -130,7 +130,7 @@ def _check_rate_limit(request: Request) -> None:
     if len(hits) >= CHAT_RATE_LIMIT:
         raise HTTPException(
             status_code=429,
-            detail="You're asking faster than TerpAdvisor can keep up. Give it a few minutes and try again.",
+            detail="You're asking faster than TerpGuide can keep up. Give it a few minutes and try again.",
         )
     hits.append(now)
 
@@ -153,7 +153,7 @@ async def _run_turn(prompt: str, history: list[dict[str, str]], emit: agent.Emit
             result = await agent.fallback_answer(prompt, emit)
         except Exception as fallback_exc:
             logger.exception("Fallback failed")
-            raise ChatUnavailableError(503, "TerpAdvisor is temporarily unavailable.") from fallback_exc
+            raise ChatUnavailableError(503, "TerpGuide is temporarily unavailable.") from fallback_exc
     except Exception as exc:
         logger.exception("Chat request failed")
         raise ChatUnavailableError(500, "Something went wrong answering that.") from exc

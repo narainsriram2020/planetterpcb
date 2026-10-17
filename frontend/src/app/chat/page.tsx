@@ -10,7 +10,7 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 import ui from "@/components/ui.module.css";
 import styles from "@/components/chat.module.css";
 
-const STORAGE_KEY = "terpadvisor-chat";
+const STORAGE_KEY = "terpguide-chat";
 
 const SUGGESTIONS = [
   { icon: GraduationCap, title: "Pick a professor", prompt: "Who should I take for CMSC330?" },
@@ -159,7 +159,7 @@ export default function ChatPage() {
               What are you thinking of <span className={styles.welcomeAccent}>taking</span>?
             </h1>
             <p className={styles.welcomeSub}>
-              Ask about any UMD course or professor. TerpAdvisor pulls real grade distributions, ratings,
+              Ask about any UMD course or professor. TerpGuide pulls real grade distributions, ratings,
               and reviews, then gives you a straight answer.
             </p>
             <div className={styles.suggestions}>
@@ -201,7 +201,7 @@ export default function ChatPage() {
             placeholder="Ask about a course, a professor, or GenEds…"
             rows={1}
             maxLength={2000}
-            aria-label="Message TerpAdvisor"
+            aria-label="Message TerpGuide"
             autoFocus
           />
           {working ? (

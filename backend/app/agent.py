@@ -1,4 +1,4 @@
-"""TerpAdvisor: a Gemini agent that answers questions by calling the PlanetTerp MCP tools.
+"""TerpGuide: a Gemini agent that answers questions by calling the PlanetTerp MCP tools.
 
 The agent is an MCP client. By default it talks to the in-process server over
 an in-memory transport; set MCP_SERVER_URL to use a remote server over
@@ -42,7 +42,7 @@ MAX_TOOL_ROUNDS = 6
 MAX_GEMINI_ATTEMPTS = 3
 RETRYABLE_STATUS_CODES = {429, 500, 503}
 
-SYSTEM_PROMPT = """You are TerpAdvisor, a friendly assistant for University of Maryland students, \
+SYSTEM_PROMPT = """You are TerpGuide, a friendly assistant for University of Maryland students, \
 backed by PlanetTerp data on courses, professors, and grades.
 
 How to work:
@@ -270,9 +270,9 @@ async def fallback_answer(prompt: str, emit: Emit = _ignore) -> AgentReply:
         payload, ok = await _call_tool_with_events(session, call, 0, emit)
     matches = payload.get("results", []) if ok else []
     if not matches:
-        text = "TerpAdvisor's AI is temporarily unavailable. Try again in a minute, or search planetterp.com directly."
+        text = "TerpGuide's AI is temporarily unavailable. Try again in a minute, or search planetterp.com directly."
     else:
-        lines = ["TerpAdvisor's AI is temporarily unavailable, but here are courses matching your question:"]
+        lines = ["TerpGuide's AI is temporarily unavailable, but here are courses matching your question:"]
         for course in matches:
             gpa = course.get("average_gpa")
             gpa_text = f" (avg GPA {gpa:.2f})" if isinstance(gpa, (int, float)) else ""

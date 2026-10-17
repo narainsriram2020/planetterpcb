@@ -21,10 +21,10 @@ export function LogoMark({ size = 28 }: { size?: number }) {
 
 export function Logo({ href = "/" }: { href?: string }) {
   return (
-    <Link href={href} className={styles.logo} aria-label="TerpAdvisor home">
+    <Link href={href} className={styles.logo} aria-label="TerpGuide home">
       <LogoMark size={30} />
       <span className={styles.wordmark}>
-        Terp<span className={styles.accent}>Advisor</span>
+        Terp<span className={styles.accent}>Guide</span>
       </span>
     </Link>
   );

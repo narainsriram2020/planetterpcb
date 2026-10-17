@@ -77,7 +77,7 @@ export default function LandingPage() {
             Pick classes with real data, <span className={styles.accent}>not vibes.</span>
           </h1>
           <p className={styles.heroSub}>
-            Ask who to take, how hard a class is, or which GenEds grade nicest. TerpAdvisor pulls PlanetTerp grade
+            Ask who to take, how hard a class is, or which GenEds grade nicest. TerpGuide pulls PlanetTerp grade
             distributions, ratings, and reviews, and shows you the numbers behind every answer.
           </p>
           <div className={styles.heroCtas}>
@@ -142,7 +142,7 @@ export default function LandingPage() {
           <span className={styles.eyebrow}><Database size={14} /> Under the hood</span>
           <h2 className={styles.sectionTitle}>A real MCP server you can plug into any AI client</h2>
           <p className={styles.sectionSub}>
-            The same five tools TerpAdvisor uses are exposed over the Model Context Protocol, at <code>/mcp</code> over
+            The same five tools TerpGuide uses are exposed over the Model Context Protocol, at <code>/mcp</code> over
             HTTP or over stdio. Point Claude Desktop, Cursor, or the MCP Inspector at it.
           </p>
           <ul className={styles.toolList}>
@@ -163,7 +163,7 @@ export default function LandingPage() {
       <section className={styles.finalCta}>
         <h2>Registration&apos;s coming. Plan with data.</h2>
         <Link href="/chat" className={`${ui.buttonPrimary} ${styles.bigButton}`}>
-          Open TerpAdvisor <ArrowRight size={17} />
+          Open TerpGuide <ArrowRight size={17} />
         </Link>
       </section>
 

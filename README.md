@@ -1,6 +1,6 @@
-# 🐢 TerpAdvisor — AI course advisor for UMD
+# 🐢 TerpGuide — AI course advisor for UMD
 
-TerpAdvisor is a chatbot for UMD students that answers questions about courses, professors, and grade distributions using real PlanetTerp data. A Gemini agent decides which tools to call on a **Model Context Protocol (MCP)** server, which serves live PlanetTerp data and semantic search over a Qdrant vector index.
+TerpGuide is a chatbot for UMD students that answers questions about courses, professors, and grade distributions using real PlanetTerp data. A Gemini agent decides which tools to call on a **Model Context Protocol (MCP)** server, which serves live PlanetTerp data and semantic search over a Qdrant vector index.
 
 ---
 
@@ -145,7 +145,7 @@ Backend on [Render](https://render.com) (free web service), frontend on [Vercel]
 
 1. **Backend (Render).** New → Blueprint → select this repo; it reads [`render.yaml`](render.yaml). Fill in `GEMINI_API_KEY`, `QDRANT_URL`, `QDRANT_API_KEY`, and leave `FRONTEND_ORIGINS` for step 3. Check `https://<service>.onrender.com/health`.
 2. **Frontend (Vercel).** Add New → Project → this repo, set **Root Directory** to `frontend`, and add `NEXT_PUBLIC_API_URL=https://<service>.onrender.com`.
-3. **CORS.** Set `FRONTEND_ORIGINS` on Render to your Vercel URL (e.g. `https://terpadvisor.vercel.app`) and redeploy.
+3. **CORS.** Set `FRONTEND_ORIGINS` on Render to your Vercel URL (e.g. `https://terpguide.vercel.app`) and redeploy.
 4. **Keep-alive.** Add a repository variable `BACKEND_URL` (Settings → Secrets and variables → Actions → Variables) so [`keepalive.yml`](.github/workflows/keepalive.yml) pings the API daily and keeps the free Qdrant cluster active.
 
 Free-tier notes: Render sleeps after 15 minutes idle (the first request after that takes ~30–60s), chat is rate-limited per client (`CHAT_RATE_LIMIT`, default 30 per 10 minutes), and Gemini's free tier has its own daily caps.
@@ -156,7 +156,7 @@ Free-tier notes: Render sleeps after 15 minutes idle (the first request after th
 
 | Problem | Fix |
 |---|---|
-| Replies start with "TerpAdvisor's AI is temporarily unavailable" | Gemini quota or outage — check the server log for the error; try `gemini-flash-lite-latest` or enable billing |
+| Replies start with "TerpGuide's AI is temporarily unavailable" | Gemini quota or outage — check the server log for the error; try `gemini-flash-lite-latest` or enable billing |
 | `/health` shows `vector_store_ready: false` | Build the index with `scripts/scrape_and_index.py`, or check your Qdrant Cloud cluster isn't suspended |
 | Local Qdrant "already accessed by another instance" | The on-disk store allows one process at a time — stop the API before re-indexing |
 

@@ -7,10 +7,10 @@ const geistMono = Geist_Mono({ subsets: ['latin'], variable: '--font-geist-mono'
 const bricolage = Bricolage_Grotesque({ subsets: ['latin'], variable: '--font-bricolage', display: 'swap' })
 
 export const metadata: Metadata = {
-  title: 'TerpAdvisor - AI Course Advisor for UMD',
+  title: 'TerpGuide - AI Course Advisor for UMD',
   description: 'Ask about University of Maryland courses, professors, and grade distributions. Answers are grounded in PlanetTerp data.',
   keywords: ['UMD', 'University of Maryland', 'courses', 'professors', 'chatbot', 'PlanetTerp', 'Terrapins'],
-  authors: [{ name: 'TerpAdvisor' }],
+  authors: [{ name: 'TerpGuide' }],
 }
 
 export const viewport: Viewport = {

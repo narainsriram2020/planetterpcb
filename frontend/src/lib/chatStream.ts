@@ -35,7 +35,7 @@ export async function streamChat(
   } catch (err) {
     if (signal?.aborted) throw err;
     throw new ChatRequestError(
-      "Couldn't reach the TerpAdvisor server. Check your connection, or make sure the backend is running.",
+      "Couldn't reach the TerpGuide server. Check your connection, or make sure the backend is running.",
     );
   }
   if (!res.ok || !res.body) throw new ChatRequestError(await errorMessage(res));
