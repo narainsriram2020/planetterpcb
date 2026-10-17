@@ -6,6 +6,7 @@ import { Logo, LogoMark } from "@/components/Logo";
 import { Markdown } from "@/components/Markdown";
 import { McpConnect } from "@/components/McpConnect";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { SITE_DESCRIPTION, SITE_NAME, SITE_URL } from "@/lib/site";
 import ui from "@/components/ui.module.css";
 import styles from "./landing.module.css";
 
@@ -50,9 +51,23 @@ const TOOLS = [
 // The deployed API serves the MCP server at /mcp/ (trailing slash avoids a redirect).
 const MCP_URL = `${(process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000").replace(/\/$/, "")}/mcp/`;
 
+// Structured data so search engines know this is a free web app for UMD students.
+const JSON_LD = {
+  "@context": "https://schema.org",
+  "@type": "WebApplication",
+  name: SITE_NAME,
+  url: SITE_URL,
+  description: SITE_DESCRIPTION,
+  applicationCategory: "EducationalApplication",
+  operatingSystem: "Any",
+  offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
+  audience: { "@type": "EducationalAudience", educationalRole: "student" },
+};
+
 export default function LandingPage() {
   return (
     <div className={styles.page}>
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(JSON_LD) }} />
       <nav className={styles.nav}>
         <Logo />
         <div className={styles.navActions}>
