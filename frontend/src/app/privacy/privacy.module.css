@@ -1,0 +1,75 @@
+.page {
+  min-height: 100dvh;
+}
+
+.nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 18px 24px;
+}
+
+.content {
+  max-width: 680px;
+  margin: 0 auto;
+  padding: 16px 24px 80px;
+  color: var(--text-2);
+  font-size: 15.5px;
+  line-height: 1.7;
+}
+
+.content h1 {
+  margin-top: 18px;
+  font-size: clamp(32px, 5vw, 42px);
+  font-weight: 800;
+  color: var(--text);
+}
+
+.content h2 {
+  margin: 34px 0 10px;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.content ul {
+  padding-left: 20px;
+}
+
+.content li {
+  margin: 8px 0;
+}
+
+.content li::marker {
+  color: var(--red);
+}
+
+.content strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.content a {
+  color: var(--red-ink);
+}
+
+.updated {
+  margin: 6px 0 22px;
+  font-size: 13px;
+  color: var(--text-3);
+}
+
+.back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  color: var(--text-2) !important;
+  text-decoration: none;
+}
+
+.back:hover {
+  color: var(--text) !important;
+}

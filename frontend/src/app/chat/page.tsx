@@ -1,16 +1,22 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowUp, BookOpen, ChartColumn, GraduationCap, Search, Square, SquarePen } from "lucide-react";
-import type { BotMessage, ChatMessage, StreamEvent } from "@/types/chat";
-import { ChatRequestError, streamChat } from "@/lib/chatStream";
-import { Logo } from "@/components/Logo";
+import type { Session } from "@supabase/supabase-js";
+import { ArrowUp, BookOpen, ChartColumn, GraduationCap, PanelLeft, Search, Square, SquarePen } from "lucide-react";
+import type { BotMessage, ChatMessage, Conversation, StreamEvent } from "@/types/chat";
+import { AuthRequiredError, ChatRequestError, streamChat } from "@/lib/chatStream";
+import {
+  deleteAccount, deleteAllConversations, deleteConversation, listConversations, loadMessages, renameConversation,
+} from "@/lib/history";
+import { accountsEnabled, getSupabase } from "@/lib/supabase";
+import { useSession } from "@/lib/useSession";
+import { Logo, LogoMark } from "@/components/Logo";
 import { Message } from "@/components/Message";
+import { Sidebar } from "@/components/Sidebar";
+import { SignIn } from "@/components/SignIn";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import ui from "@/components/ui.module.css";
 import styles from "@/components/chat.module.css";
-
-const STORAGE_KEY = "terpguide-chat";
 
 const SUGGESTIONS = [
   { icon: GraduationCap, title: "Pick a professor", prompt: "Who should I take for CMSC330?" },
@@ -26,6 +32,8 @@ function newId() {
 /** Fold one stream event into the in-progress bot message. */
 function applyEvent(msg: BotMessage, event: StreamEvent): BotMessage {
   switch (event.type) {
+    case "conversation":
+      return msg;
     case "tool_start":
       return { ...msg, steps: [...msg.steps, { id: event.id, name: event.name, arguments: event.arguments, status: "running" }] };
     case "tool_end":
@@ -45,37 +53,68 @@ function applyEvent(msg: BotMessage, event: StreamEvent): BotMessage {
 }
 
 export default function ChatPage() {
+  const { session, loading } = useSession();
+  const [notice, setNotice] = useState<string | null>(null);
+
+  // Without Supabase settings (local development) the chat runs without accounts.
+  if (!accountsEnabled) return <ChatApp session={null} onSignedOut={() => {}} />;
+  if (loading) {
+    return (
+      <div className={styles.splash} aria-label="Loading">
+        <LogoMark size={44} />
+      </div>
+    );
+  }
+  if (!session) return <SignIn notice={notice} />;
+  return (
+    <ChatApp
+      key={session.user.id}
+      session={session}
+      onSignedOut={(message) => {
+        setNotice(message);
+        getSupabase()?.auth.signOut();
+      }}
+    />
+  );
+}
+
+function ChatApp({ session, onSignedOut }: { session: Session | null; onSignedOut: (notice: string | null) => void }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [working, setWorking] = useState(false);
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [conversationsLoading, setConversationsLoading] = useState(Boolean(session));
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [threadLoading, setThreadLoading] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const activeIdRef = useRef<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
 
-  // Restore the last conversation (per browser) and keep it saved.
-  useEffect(() => {
+  const meta = session?.user.user_metadata ?? {};
+  const fullName: string | null = meta.full_name || meta.name || null;
+  const firstName = fullName?.split(" ")[0] ?? null;
+
+  const setActive = (id: string | null) => {
+    activeIdRef.current = id;
+    setActiveId(id);
+  };
+
+  const refreshConversations = useCallback(async () => {
+    if (!session) return;
     try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) {
-        const restored: ChatMessage[] = JSON.parse(saved);
-        // An answer that was still streaming when the page closed can't resume.
-        setMessages(restored.map((m) =>
-          m.role === "bot" && m.status === "pending" ? { ...m, status: "error", text: m.text || "Interrupted." } : m,
-        ));
-      }
+      setConversations(await listConversations());
     } catch {
-      // corrupted or unavailable storage: start fresh
+      // keep whatever is showing; the next refresh will retry
+    } finally {
+      setConversationsLoading(false);
     }
-  }, []);
+  }, [session]);
 
   useEffect(() => {
-    if (working) return;
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(messages));
-    } catch {
-      // storage full or unavailable; the chat still works
-    }
-  }, [messages, working]);
+    refreshConversations();
+  }, [refreshConversations]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -93,13 +132,24 @@ export default function ChatPage() {
     setMessages((prev) => prev.map((m) => (m.id === id && m.role === "bot" ? update(m) : m)));
   }, []);
 
+  const bumpConversation = (id: string, title?: string) => {
+    setConversations((prev) => {
+      const existing = prev.find((c) => c.id === id);
+      const updated: Conversation = { id, title: title ?? existing?.title ?? "New chat", updated_at: new Date().toISOString() };
+      return [updated, ...prev.filter((c) => c.id !== id)];
+    });
+  };
+
   const send = async (text: string) => {
     const prompt = text.trim();
     if (!prompt || working) return;
 
-    const history = messages
-      .filter((m) => m.role === "user" || (m.status === "done" && m.text))
-      .map((m) => ({ role: m.role, text: m.text }));
+    // Signed-in chats load history on the server; the no-accounts mode sends it along.
+    const history = session
+      ? []
+      : messages
+          .filter((m) => m.role === "user" || (m.status === "done" && m.text))
+          .map((m) => ({ role: m.role, text: m.text }));
     const botId = newId();
     setMessages((prev) => [
       ...prev,
@@ -112,8 +162,24 @@ export default function ChatPage() {
     const controller = new AbortController();
     abortRef.current = controller;
     try {
-      await streamChat(prompt, history, (event) => updateBot(botId, (m) => applyEvent(m, event)), controller.signal);
+      const accessToken = session ? (await getSupabase()!.auth.getSession()).data.session?.access_token : null;
+      await streamChat(
+        { prompt, conversationId: activeIdRef.current, history, accessToken },
+        (event) => {
+          if (event.type === "conversation") {
+            setActive(event.id);
+            bumpConversation(event.id, event.title);
+          }
+          updateBot(botId, (m) => applyEvent(m, event));
+        },
+        controller.signal,
+      );
+      if (activeIdRef.current) bumpConversation(activeIdRef.current);
     } catch (err) {
+      if (err instanceof AuthRequiredError) {
+        onSignedOut(err.message);
+        return;
+      }
       const message = controller.signal.aborted
         ? "Stopped."
         : err instanceof ChatRequestError
@@ -130,94 +196,199 @@ export default function ChatPage() {
 
   const newChat = () => {
     abortRef.current?.abort();
+    setActive(null);
     setMessages([]);
     setInput("");
+    setDrawerOpen(false);
     inputRef.current?.focus();
   };
 
-  const empty = messages.length === 0;
+  const openConversation = async (id: string) => {
+    setDrawerOpen(false);
+    if (id === activeIdRef.current && !working) return;
+    abortRef.current?.abort();
+    setActive(id);
+    setThreadLoading(true);
+    try {
+      const loaded = await loadMessages(id);
+      if (activeIdRef.current === id) setMessages(loaded);
+    } catch {
+      if (activeIdRef.current === id) {
+        setMessages([{ id: newId(), role: "bot", text: "Couldn't load this chat. Try again.", steps: [], cards: [], status: "error" }]);
+      }
+    } finally {
+      setThreadLoading(false);
+    }
+  };
+
+  const rename = async (id: string, title: string) => {
+    setConversations((prev) => prev.map((c) => (c.id === id ? { ...c, title } : c)));
+    try {
+      await renameConversation(id, title);
+    } catch {
+      refreshConversations();
+    }
+  };
+
+  const remove = async (id: string) => {
+    setConversations((prev) => prev.filter((c) => c.id !== id));
+    if (activeIdRef.current === id) newChat();
+    try {
+      await deleteConversation(id);
+    } catch {
+      refreshConversations();
+    }
+  };
+
+  const removeAll = async () => {
+    if (!session) return;
+    newChat();
+    setConversations([]);
+    try {
+      await deleteAllConversations(session.user.id);
+    } catch {
+      refreshConversations();
+    }
+  };
+
+  const removeAccount = async () => {
+    const token = (await getSupabase()?.auth.getSession())?.data.session?.access_token;
+    if (!token) return onSignedOut("Your session expired. Sign in again.");
+    try {
+      await deleteAccount(token);
+      onSignedOut("Your account and all of your chats were deleted.");
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Couldn't delete your account. Try again.");
+    }
+  };
+
+  const empty = messages.length === 0 && !threadLoading;
+  const activeTitle = conversations.find((c) => c.id === activeId)?.title ?? null;
 
   return (
-    <div className={styles.app}>
-      <header className={styles.topbar}>
-        <Logo />
-        <div className={styles.topbarActions}>
-          {!empty && (
-            <button type="button" className={ui.button} onClick={newChat}>
-              <SquarePen size={15} /> New chat
-            </button>
-          )}
-          <ThemeToggle />
-        </div>
-      </header>
+    <div className={styles.shell}>
+      {session && (
+        <Sidebar
+          conversations={conversations}
+          loading={conversationsLoading}
+          activeId={activeId}
+          user={{ name: fullName, email: session.user.email ?? null, avatarUrl: meta.avatar_url ?? meta.picture ?? null }}
+          open={drawerOpen}
+          onClose={() => setDrawerOpen(false)}
+          onSelect={openConversation}
+          onNew={newChat}
+          onRename={rename}
+          onDelete={remove}
+          onDeleteAll={removeAll}
+          onDeleteAccount={removeAccount}
+          onSignOut={() => onSignedOut(null)}
+        />
+      )}
 
-      <main className={styles.main}>
-        {empty ? (
-          <section className={styles.welcome}>
-            <span className={styles.welcomeBadge}>Grounded in PlanetTerp data</span>
-            <h1 className={styles.welcomeTitle}>
-              What are you thinking of <span className={styles.welcomeAccent}>taking</span>?
-            </h1>
-            <p className={styles.welcomeSub}>
-              Ask about any UMD course or professor. TerpGuide pulls real grade distributions, ratings,
-              and reviews, then gives you a straight answer.
-            </p>
-            <div className={styles.suggestions}>
-              {SUGGESTIONS.map(({ icon: Icon, title, prompt }) => (
-                <button key={title} type="button" className={styles.suggestion} onClick={() => send(prompt)}>
-                  <span className={styles.suggestionIcon}><Icon size={16} /></span>
-                  <span className={styles.suggestionTitle}>{title}</span>
-                  <span className={styles.suggestionPrompt}>{prompt}</span>
+      <div className={styles.app}>
+        <header className={styles.topbar}>
+          <div className={styles.topbarLeft}>
+            {session ? (
+              <>
+                <button
+                  type="button"
+                  className={`${ui.iconButton} ${styles.menuButton}`}
+                  onClick={() => setDrawerOpen(true)}
+                  aria-label="Open saved chats"
+                >
+                  <PanelLeft size={18} />
                 </button>
-              ))}
-            </div>
-          </section>
-        ) : (
-          <div className={styles.thread} role="log" aria-live="polite">
-            {messages.map((m) => <Message key={m.id} message={m} />)}
-            <div ref={endRef} />
+                <span className={styles.mobileOnly}><Logo /></span>
+                {activeTitle && <span className={styles.chatTitle}>{activeTitle}</span>}
+              </>
+            ) : (
+              <Logo />
+            )}
           </div>
-        )}
-      </main>
+          <div className={styles.topbarActions}>
+            {(session || messages.length > 0) && (
+              <button type="button" className={`${ui.button} ${session ? styles.mobileOnly : ""}`} onClick={newChat}>
+                <SquarePen size={15} /> New chat
+              </button>
+            )}
+            <ThemeToggle />
+          </div>
+        </header>
 
-      <footer className={styles.composerDock}>
-        <form
-          className={styles.composer}
-          onSubmit={(e) => {
-            e.preventDefault();
-            send(input);
-          }}
-        >
-          <textarea
-            ref={inputRef}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                send(input);
-              }
-            }}
-            placeholder="Ask about a course, a professor, or GenEds…"
-            rows={1}
-            maxLength={2000}
-            aria-label="Message TerpGuide"
-            autoFocus
-          />
-          {working ? (
-            <button type="button" className={styles.sendButton} onClick={() => abortRef.current?.abort()} aria-label="Stop">
-              <Square size={14} fill="currentColor" />
-            </button>
+        <main className={styles.main}>
+          {threadLoading ? (
+            <div className={styles.threadSkeleton} aria-label="Loading chat">
+              <span /><span /><span />
+            </div>
+          ) : empty ? (
+            <section className={styles.welcome}>
+              <span className={styles.welcomeBadge}>
+                {firstName ? `Hey ${firstName}` : "Grounded in PlanetTerp data"}
+              </span>
+              <h1 className={styles.welcomeTitle}>
+                What are you thinking of <span className={styles.welcomeAccent}>taking</span>?
+              </h1>
+              <p className={styles.welcomeSub}>
+                Ask about any UMD course or professor. TerpGuide pulls real grade distributions, ratings,
+                and reviews, then gives you a straight answer.
+              </p>
+              <div className={styles.suggestions}>
+                {SUGGESTIONS.map(({ icon: Icon, title, prompt }) => (
+                  <button key={title} type="button" className={styles.suggestion} onClick={() => send(prompt)}>
+                    <span className={styles.suggestionIcon}><Icon size={16} /></span>
+                    <span className={styles.suggestionTitle}>{title}</span>
+                    <span className={styles.suggestionPrompt}>{prompt}</span>
+                  </button>
+                ))}
+              </div>
+            </section>
           ) : (
-            <button type="submit" className={styles.sendButton} disabled={!input.trim()} aria-label="Send">
-              <ArrowUp size={18} />
-            </button>
+            <div className={styles.thread} role="log" aria-live="polite">
+              {messages.map((m) => <Message key={m.id} message={m} />)}
+              <div ref={endRef} />
+            </div>
           )}
-        </form>
-        <p className={styles.disclaimer}>
-          Data from PlanetTerp. Not affiliated with the University of Maryland. Questions are answered by Google Gemini, so skip personal info, and double-check before you register.
-        </p>
-      </footer>
+        </main>
+
+        <footer className={styles.composerDock}>
+          <form
+            className={styles.composer}
+            onSubmit={(e) => {
+              e.preventDefault();
+              send(input);
+            }}
+          >
+            <textarea
+              ref={inputRef}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  send(input);
+                }
+              }}
+              placeholder="Ask about a course, a professor, or GenEds…"
+              rows={1}
+              maxLength={2000}
+              aria-label="Message TerpGuide"
+              autoFocus
+            />
+            {working ? (
+              <button type="button" className={styles.sendButton} onClick={() => abortRef.current?.abort()} aria-label="Stop">
+                <Square size={14} fill="currentColor" />
+              </button>
+            ) : (
+              <button type="submit" className={styles.sendButton} disabled={!input.trim()} aria-label="Send">
+                <ArrowUp size={18} />
+              </button>
+            )}
+          </form>
+          <p className={styles.disclaimer}>
+            Data from PlanetTerp. Not affiliated with the University of Maryland. Questions are answered by Google Gemini, so skip personal info, and double-check before you register.
+          </p>
+        </footer>
+      </div>
     </div>
   );
 }

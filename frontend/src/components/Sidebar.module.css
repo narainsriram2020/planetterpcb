@@ -1,0 +1,378 @@
+.sidebar {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  width: 272px;
+  height: 100dvh;
+  flex: none;
+  padding: 14px 12px 12px;
+  border-right: 1px solid var(--border);
+  background: var(--bg-elevated);
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px 6px 14px;
+}
+
+.close {
+  display: none;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.newChat {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 40px;
+  padding: 0 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.newChat:hover {
+  border-color: color-mix(in srgb, var(--red) 45%, var(--border));
+}
+
+.newChat svg {
+  color: var(--red);
+}
+
+/* ── Conversation list ─────────────────────────────────────── */
+
+.list {
+  flex: 1;
+  min-height: 0;
+  margin: 14px -4px 0;
+  padding: 0 4px;
+  overflow-y: auto;
+}
+
+.list ul {
+  margin: 0 0 12px;
+  padding: 0;
+  list-style: none;
+}
+
+.groupLabel {
+  margin: 10px 8px 4px;
+  font-family: var(--font-sans);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  border-radius: 8px;
+}
+
+.item:hover {
+  background: var(--surface-2);
+}
+
+.itemActive {
+  background: var(--surface-2);
+}
+
+.itemActive::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--red);
+}
+
+.itemButton {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 6px 8px 12px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  font-size: 13.5px;
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.itemActive .itemButton {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.itemMenuWrap {
+  position: relative;
+}
+
+.itemMore {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  margin-right: 4px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+  opacity: 0;
+}
+
+.item:hover .itemMore,
+.itemActive .itemMore,
+.itemMore:focus-visible,
+.itemMore[aria-expanded="true"] {
+  opacity: 1;
+}
+
+.itemMore:hover {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.renameInput {
+  width: 100%;
+  margin: 3px;
+  padding: 5px 9px;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--red) 55%, var(--border));
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 13.5px;
+  outline: none;
+}
+
+.empty {
+  margin: 12px 10px;
+  font-size: 13px;
+  color: var(--text-3);
+}
+
+.skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 8px;
+}
+
+.skeleton span {
+  height: 14px;
+  border-radius: 6px;
+  background: var(--surface-2);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+.skeleton span:nth-child(2) {
+  width: 80%;
+}
+
+.skeleton span:nth-child(3) {
+  width: 60%;
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.5;
+  }
+}
+
+/* ── Menus ─────────────────────────────────────────────────── */
+
+.menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  min-width: 200px;
+  padding: 5px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-lg);
+}
+
+.menu button,
+.menu a {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text);
+  font-size: 13.5px;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.menu button:hover,
+.menu a:hover {
+  background: var(--surface-2);
+}
+
+.menu .danger {
+  color: var(--red-ink);
+}
+
+.menuDivider {
+  height: 1px;
+  margin: 4px 2px;
+  background: var(--border);
+}
+
+/* ── Account ───────────────────────────────────────────────── */
+
+.account {
+  position: relative;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.accountMenu {
+  top: auto;
+  bottom: calc(100% + 6px);
+  left: 0;
+  right: 0;
+}
+
+.accountButton {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.accountButton:hover,
+.accountButton[aria-expanded="true"] {
+  background: var(--surface-2);
+}
+
+.avatar {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  object-fit: cover;
+  background: var(--red);
+  color: #fff;
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.accountText {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.accountName,
+.accountEmail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.accountName {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.accountEmail {
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+.accountMore {
+  flex-shrink: 0;
+  color: var(--text-3);
+}
+
+/* ── Mobile drawer ─────────────────────────────────────────── */
+
+.backdrop {
+  display: none;
+}
+
+@media (max-width: 860px) {
+  .sidebar {
+    position: fixed;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: min(300px, 86vw);
+    transform: translateX(-100%);
+    transition: transform 0.22s ease;
+    box-shadow: var(--shadow-lg);
+  }
+
+  .sidebarOpen {
+    transform: none;
+  }
+
+  .close {
+    display: grid;
+  }
+
+  .itemMore {
+    opacity: 1;
+  }
+
+  .backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 25;
+    display: block;
+    background: rgba(0, 0, 0, 0.4);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s;
+  }
+
+  .backdropOpen {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}

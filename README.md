@@ -110,6 +110,9 @@ The deployed server is public at `https://terpadvisor-api-9glv.onrender.com/mcp/
 | `MCP_SERVER_URL` | — | Use a remote MCP server instead of the in-process one |
 | `MCP_ALLOWED_HOSTS` | localhost | Hostnames allowed to call `/mcp` when deployed (`*` disables the check) |
 | `FRONTEND_ORIGINS` | `*` | CORS origins for the chat API |
+| `SUPABASE_URL` / `SUPABASE_SECRET_KEY` | — | Accounts + saved chats; when set, chat requires Google sign-in |
+| `REQUIRE_AUTH` | `true` if Supabase is set | `false` allows anonymous chat (local testing) |
+| `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | — | Frontend sign-in (Vercel / `frontend/.env.local`) |
 
 Set these in `.env` in the project root (or in `backend/`).
 

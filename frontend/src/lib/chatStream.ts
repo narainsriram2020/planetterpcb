@@ -1,10 +1,13 @@
 import type { StreamEvent } from "@/types/chat";
 
-const API_URL = (process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
+export const API_URL = (process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
 
 export class ChatRequestError extends Error {}
 
-async function errorMessage(res: Response): Promise<string> {
+/** The server rejected the sign-in (missing or expired session). */
+export class AuthRequiredError extends ChatRequestError {}
+
+export async function errorMessage(res: Response): Promise<string> {
   try {
     const body = await res.json();
     if (typeof body?.detail === "string") return body.detail;
@@ -14,13 +17,22 @@ async function errorMessage(res: Response): Promise<string> {
   return `The server returned an error (HTTP ${res.status}). Try again in a moment.`;
 }
 
+export interface ChatTurnRequest {
+  prompt: string;
+  /** Saved conversation to continue; omit to start a new one. */
+  conversationId?: string | null;
+  /** Only used when the app runs without accounts (local development). */
+  history?: { role: "user" | "bot"; text: string }[];
+  /** Supabase access token for the signed-in user. */
+  accessToken?: string | null;
+}
+
 /**
  * POST a chat turn to /chat/stream and invoke `onEvent` for each NDJSON event
- * (tool steps, data cards, the answer) as it arrives.
+ * (new conversation, tool steps, data cards, the answer) as it arrives.
  */
 export async function streamChat(
-  prompt: string,
-  history: { role: "user" | "bot"; text: string }[],
+  { prompt, conversationId, history = [], accessToken }: ChatTurnRequest,
   onEvent: (event: StreamEvent) => void,
   signal?: AbortSignal,
 ): Promise<void> {
@@ -28,8 +40,11 @@ export async function streamChat(
   try {
     res = await fetch(`${API_URL}/chat/stream`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt, history }),
+      headers: {
+        "Content-Type": "application/json",
+        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+      },
+      body: JSON.stringify({ prompt, conversation_id: conversationId ?? null, history }),
       signal,
     });
   } catch (err) {
@@ -38,6 +53,7 @@ export async function streamChat(
       "Couldn't reach the TerpGuide server. Check your connection, or make sure the backend is running.",
     );
   }
+  if (res.status === 401) throw new AuthRequiredError(await errorMessage(res));
   if (!res.ok || !res.body) throw new ChatRequestError(await errorMessage(res));
 
   const reader = res.body.getReader();

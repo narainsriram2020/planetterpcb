@@ -29,6 +29,11 @@ services:
       # Your Vercel URL, e.g. https://terpguide.vercel.app (comma-separate several)
       - key: FRONTEND_ORIGINS
         sync: false
+      # Accounts + saved chats (chat requires sign-in once SUPABASE_URL is set)
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SECRET_KEY
+        sync: false
       # The MCP endpoint is public and read-only, so skip localhost-only host checks.
       - key: MCP_ALLOWED_HOSTS
         value: "*"

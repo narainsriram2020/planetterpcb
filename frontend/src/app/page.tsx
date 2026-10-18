@@ -176,7 +176,9 @@ export default function LandingPage() {
 
       <footer className={styles.footer}>
         <span>Data from <a href="https://planetterp.com" target="_blank" rel="noreferrer">PlanetTerp</a>.</span>
-        <span>Not affiliated with or endorsed by the University of Maryland.</span>
+        <span>
+          Not affiliated with or endorsed by the University of Maryland. <Link href="/privacy">Privacy</Link>
+        </span>
       </footer>
     </div>
   );

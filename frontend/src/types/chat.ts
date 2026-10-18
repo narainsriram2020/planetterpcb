@@ -59,6 +59,7 @@ export interface ToolStep {
 }
 
 export type StreamEvent =
+  | { type: "conversation"; id: string; title: string }
   | { type: "tool_start"; id: number; name: string; arguments: Record<string, unknown> }
   | { type: "tool_end"; id: number; name: string; ok: boolean }
   | { type: "card"; card: Card }
@@ -83,3 +84,10 @@ export interface BotMessage {
 }
 
 export type ChatMessage = UserMessage | BotMessage;
+
+/** A saved chat (row in the Supabase `conversations` table). */
+export interface Conversation {
+  id: string;
+  title: string;
+  updated_at: string;
+}
