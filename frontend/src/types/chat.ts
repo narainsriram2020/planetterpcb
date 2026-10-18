@@ -60,6 +60,7 @@ export interface ToolStep {
 
 export type StreamEvent =
   | { type: "conversation"; id: string; title: string }
+  | { type: "guest"; remaining: number }
   | { type: "tool_start"; id: number; name: string; arguments: Record<string, unknown> }
   | { type: "tool_end"; id: number; name: string; ok: boolean }
   | { type: "card"; card: Card }

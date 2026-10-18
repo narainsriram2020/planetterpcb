@@ -13,7 +13,7 @@ import { useSession } from "@/lib/useSession";
 import { Logo, LogoMark } from "@/components/Logo";
 import { Message } from "@/components/Message";
 import { Sidebar } from "@/components/Sidebar";
-import { SignIn } from "@/components/SignIn";
+import { GoogleIcon, SignIn } from "@/components/SignIn";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import ui from "@/components/ui.module.css";
 import styles from "@/components/chat.module.css";
@@ -29,10 +29,27 @@ function newId() {
   return Math.random().toString(36).slice(2, 10);
 }
 
+const GUEST_ID_KEY = "terpguide-guest-id";
+
+/** Random id the server counts free guest questions against (kept per browser). */
+function guestId(): string {
+  try {
+    let id = localStorage.getItem(GUEST_ID_KEY);
+    if (!id) {
+      id = crypto.randomUUID();
+      localStorage.setItem(GUEST_ID_KEY, id);
+    }
+    return id;
+  } catch {
+    return crypto.randomUUID(); // storage blocked: counts per page load instead
+  }
+}
+
 /** Fold one stream event into the in-progress bot message. */
 function applyEvent(msg: BotMessage, event: StreamEvent): BotMessage {
   switch (event.type) {
     case "conversation":
+    case "guest":
       return msg;
     case "tool_start":
       return { ...msg, steps: [...msg.steps, { id: event.id, name: event.name, arguments: event.arguments, status: "running" }] };
@@ -54,10 +71,13 @@ function applyEvent(msg: BotMessage, event: StreamEvent): BotMessage {
 
 export default function ChatPage() {
   const { session, loading } = useSession();
-  const [notice, setNotice] = useState<string | null>(null);
+  // null = closed; otherwise the dialog is open, optionally with a reason to show.
+  const [signInPrompt, setSignInPrompt] = useState<{ notice: string | null } | null>(null);
 
   // Without Supabase settings (local development) the chat runs without accounts.
-  if (!accountsEnabled) return <ChatApp session={null} onSignedOut={() => {}} />;
+  if (!accountsEnabled) {
+    return <ChatApp session={null} guest={false} onSignInNeeded={() => {}} onSignedOut={() => {}} />;
+  }
   if (loading) {
     return (
       <div className={styles.splash} aria-label="Loading">
@@ -65,20 +85,34 @@ export default function ChatPage() {
       </div>
     );
   }
-  if (!session) return <SignIn notice={notice} />;
+  // Signed out, people chat as guests with a few free questions, then get asked to sign in.
   return (
-    <ChatApp
-      key={session.user.id}
-      session={session}
-      onSignedOut={(message) => {
-        setNotice(message);
-        getSupabase()?.auth.signOut();
-      }}
-    />
+    <>
+      <ChatApp
+        key={session?.user.id ?? "guest"}
+        session={session}
+        guest={!session}
+        onSignInNeeded={(notice) => setSignInPrompt({ notice })}
+        onSignedOut={(notice) => {
+          getSupabase()?.auth.signOut();
+          if (notice) setSignInPrompt({ notice });
+        }}
+      />
+      {signInPrompt && !session && (
+        <SignIn notice={signInPrompt.notice} onClose={() => setSignInPrompt(null)} />
+      )}
+    </>
   );
 }
 
-function ChatApp({ session, onSignedOut }: { session: Session | null; onSignedOut: (notice: string | null) => void }) {
+function ChatApp({
+  session, guest, onSignInNeeded, onSignedOut,
+}: {
+  session: Session | null;
+  guest: boolean;
+  onSignInNeeded: (notice: string | null) => void;
+  onSignedOut: (notice: string | null) => void;
+}) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [working, setWorking] = useState(false);
@@ -87,6 +121,7 @@ function ChatApp({ session, onSignedOut }: { session: Session | null; onSignedOu
   const [activeId, setActiveId] = useState<string | null>(null);
   const [threadLoading, setThreadLoading] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [guestRemaining, setGuestRemaining] = useState<number | null>(null);
   const activeIdRef = useRef<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
@@ -143,6 +178,10 @@ function ChatApp({ session, onSignedOut }: { session: Session | null; onSignedOu
   const send = async (text: string) => {
     const prompt = text.trim();
     if (!prompt || working) return;
+    if (guest && guestRemaining === 0) {
+      onSignInNeeded("You've used your free questions. Sign in with Google to keep going, it's free.");
+      return;
+    }
 
     // Signed-in chats load history on the server; the no-accounts mode sends it along.
     const history = session
@@ -164,8 +203,9 @@ function ChatApp({ session, onSignedOut }: { session: Session | null; onSignedOu
     try {
       const accessToken = session ? (await getSupabase()!.auth.getSession()).data.session?.access_token : null;
       await streamChat(
-        { prompt, conversationId: activeIdRef.current, history, accessToken },
+        { prompt, conversationId: activeIdRef.current, history, accessToken, guestId: guest ? guestId() : null },
         (event) => {
+          if (event.type === "guest") setGuestRemaining(event.remaining);
           if (event.type === "conversation") {
             setActive(event.id);
             bumpConversation(event.id, event.title);
@@ -177,7 +217,13 @@ function ChatApp({ session, onSignedOut }: { session: Session | null; onSignedOu
       if (activeIdRef.current) bumpConversation(activeIdRef.current);
     } catch (err) {
       if (err instanceof AuthRequiredError) {
-        onSignedOut(err.message);
+        if (guest) {
+          if (err.code === "guest_limit") setGuestRemaining(0);
+          updateBot(botId, (m) => ({ ...m, text: "Sign in with Google to keep asking. It's free and saves your chats.", status: "error" }));
+          onSignInNeeded(err.message);
+        } else {
+          onSignedOut(err.message);
+        }
         return;
       }
       const message = controller.signal.aborted
@@ -306,6 +352,11 @@ function ChatApp({ session, onSignedOut }: { session: Session | null; onSignedOu
             )}
           </div>
           <div className={styles.topbarActions}>
+            {guest && (
+              <button type="button" className={ui.button} onClick={() => onSignInNeeded(null)}>
+                <GoogleIcon size={15} /> Sign in
+              </button>
+            )}
             {(session || messages.length > 0) && (
               <button type="button" className={`${ui.button} ${session ? styles.mobileOnly : ""}`} onClick={newChat}>
                 <SquarePen size={15} /> New chat
@@ -384,6 +435,16 @@ function ChatApp({ session, onSignedOut }: { session: Session | null; onSignedOu
               </button>
             )}
           </form>
+          {guest && (
+            <p className={styles.guestNote}>
+              {guestRemaining === null
+                ? "Try it free, no sign-in needed. "
+                : guestRemaining === 0
+                  ? "That was your last free question. "
+                  : `${guestRemaining} free question${guestRemaining === 1 ? "" : "s"} left. `}
+              <button type="button" onClick={() => onSignInNeeded(null)}>Sign in</button> to keep going and save your chats.
+            </p>
+          )}
           <p className={styles.disclaimer}>
             Data from PlanetTerp. Not affiliated with the University of Maryland. Questions are answered by Google Gemini, so skip personal info, and double-check before you register.
           </p>

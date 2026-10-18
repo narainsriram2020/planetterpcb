@@ -35,7 +35,18 @@ CHAT_RATE_WINDOW_SECONDS = 600
 ANSWER_CACHE_TTL_SECONDS = 6 * 60 * 60
 ANSWER_CACHE_MAX_ENTRIES = 500
 
+# Guests (not signed in) get a few free questions, then are asked to sign in.
+# Counted per browser (a random id the web app keeps), since campus Wi-Fi puts
+# many students behind one IP; the per-IP and daily caps bound abuse.
+GUEST_QUESTION_LIMIT = int(os.getenv("GUEST_QUESTION_LIMIT", "2"))  # per browser per day; 0 disables guests
+GUEST_IP_LIMIT = int(os.getenv("GUEST_IP_LIMIT", "40"))  # guest questions per IP per 10 minutes
+GUEST_DAILY_CAP = int(os.getenv("GUEST_DAILY_CAP", "200"))  # all guest questions per UTC day
+GUEST_WINDOW_SECONDS = 24 * 60 * 60
+_GUEST_ID = re.compile(r"[A-Za-z0-9-]{8,64}")
+
 _recent_requests: dict[str, deque[float]] = defaultdict(deque)
+_guest_usage: dict[str, tuple[float, int]] = {}  # guest id -> (window start, questions used)
+_guest_day: list[Any] = ["", 0]  # [UTC date, guest questions that day]
 _answer_cache: dict[str, tuple[float, list[dict[str, Any]], agent.AgentReply]] = {}
 # Strong references to in-flight chat turns; asyncio only keeps weak ones.
 _running_turns: set[asyncio.Task[None]] = set()
@@ -142,8 +153,8 @@ def _client_id(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
-def _check_rate_limit(key: str) -> None:
-    if CHAT_RATE_LIMIT <= 0:
+def _check_rate_limit(key: str, limit: int = CHAT_RATE_LIMIT) -> None:
+    if limit <= 0:
         return
     now = time.monotonic()
     if len(_recent_requests) > 10_000:  # drop idle clients so memory stays bounded
@@ -152,12 +163,44 @@ def _check_rate_limit(key: str) -> None:
     hits = _recent_requests[key]
     while hits and now - hits[0] > CHAT_RATE_WINDOW_SECONDS:
         hits.popleft()
-    if len(hits) >= CHAT_RATE_LIMIT:
+    if len(hits) >= limit:
         raise HTTPException(
             status_code=429,
             detail="You're asking faster than TerpGuide can keep up. Give it a few minutes and try again.",
         )
     hits.append(now)
+
+
+def _guest_limit_error(message: str) -> HTTPException:
+    return HTTPException(status_code=401, detail={"code": "guest_limit", "message": message})
+
+
+def _use_guest_question(request: Request) -> int:
+    """Spend one of this guest's free questions; returns how many are left."""
+    if GUEST_QUESTION_LIMIT <= 0:
+        raise HTTPException(status_code=401, detail="Sign in to chat with TerpGuide.")
+    now = time.time()
+    today = time.strftime("%Y-%m-%d", time.gmtime(now))
+    if _guest_day[0] != today:
+        _guest_day[:] = [today, 0]
+    if _guest_day[1] >= GUEST_DAILY_CAP:
+        raise _guest_limit_error("Lots of people are trying TerpGuide today. Sign in with Google to keep asking.")
+
+    header_id = request.headers.get("x-guest-id", "")
+    guest_id = header_id if _GUEST_ID.fullmatch(header_id) else f"ip:{_client_id(request)}"
+    started, used = _guest_usage.get(guest_id, (now, 0))
+    if now - started > GUEST_WINDOW_SECONDS:
+        started, used = now, 0
+    if used >= GUEST_QUESTION_LIMIT:
+        raise _guest_limit_error("You've used your free questions. Sign in with Google to keep going, it's free.")
+    _check_rate_limit(f"guest-ip:{_client_id(request)}", GUEST_IP_LIMIT)
+
+    _guest_usage[guest_id] = (started, used + 1)
+    _guest_day[1] += 1
+    if len(_guest_usage) > 50_000:  # drop expired windows so memory stays bounded
+        for stale in [k for k, (t, _) in _guest_usage.items() if now - t > GUEST_WINDOW_SECONDS]:
+            del _guest_usage[stale]
+    return GUEST_QUESTION_LIMIT - used - 1
 
 
 @dataclass
@@ -167,18 +210,25 @@ class Turn:
     user: auth.User | None
     conversation_id: str | None = None
     new_conversation: dict[str, Any] | None = None  # emitted first when a chat is created
+    guest_remaining: int | None = None  # free questions left, for guests when sign-in is required
 
 
 async def _prepare(req: ChatRequest, request: Request) -> Turn:
-    """Authenticate, rate-limit, and resolve the conversation (creating one if needed)."""
-    user = await auth.current_user(request)
-    _check_rate_limit(f"user:{user.id}" if user else _client_id(request))
+    """Authenticate (or count a guest question), rate-limit, and resolve the conversation."""
+    user = await auth.current_user(request, allow_guest=True)
     prompt = req.prompt.strip()
     if not prompt:
         raise HTTPException(status_code=400, detail="Prompt cannot be empty.")
+    guest_remaining = None
+    if user is None and auth.REQUIRE_AUTH:
+        guest_remaining = _use_guest_question(request)
+    else:
+        _check_rate_limit(f"user:{user.id}" if user else _client_id(request))
 
     if not (user and chat_store.is_configured()):
-        return Turn(prompt, [m.model_dump() for m in req.history[-MAX_HISTORY_MESSAGES:]], user)
+        # Guests and the no-accounts mode send their own history; nothing is saved.
+        history = [m.model_dump() for m in req.history[-MAX_HISTORY_MESSAGES:]]
+        return Turn(prompt, history, user, guest_remaining=guest_remaining)
 
     try:
         if req.conversation_id:
@@ -313,8 +363,9 @@ async def chat(req: ChatRequest, request: Request) -> ChatResponse:
 async def chat_stream(req: ChatRequest, request: Request) -> StreamingResponse:
     """Stream a chat turn as newline-delimited JSON events:
 
-    conversation (a new saved chat was created), tool_start / tool_end (agent
-    progress), card (data to display), answer (final text), error, and done.
+    conversation (a new saved chat was created), guest (free questions left),
+    tool_start / tool_end (agent progress), card (data to display), answer
+    (final text), error, and done.
     """
     turn = await _prepare(req, request)
     queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
@@ -328,6 +379,8 @@ async def chat_stream(req: ChatRequest, request: Request) -> StreamingResponse:
         try:
             if turn.new_conversation:
                 queue.put_nowait(turn.new_conversation)
+            if turn.guest_remaining is not None:
+                queue.put_nowait({"type": "guest", "remaining": turn.guest_remaining})
             result = await _run_turn(turn.prompt, turn.history, recorder)
             reply = result.text
             queue.put_nowait({"type": "answer", "text": reply})

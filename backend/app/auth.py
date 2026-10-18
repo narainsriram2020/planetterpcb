@@ -44,12 +44,17 @@ def _decode(token: str) -> dict:
     )
 
 
-async def current_user(request: Request) -> User | None:
-    """The signed-in user, or None for anonymous requests when sign-in isn't required."""
+async def current_user(request: Request, allow_guest: bool = False) -> User | None:
+    """The signed-in user, or None for anonymous requests.
+
+    Anonymous requests are rejected when sign-in is required, unless `allow_guest`
+    (the caller then applies its own guest limits). An invalid or expired token
+    is always rejected.
+    """
     header = request.headers.get("authorization", "")
     token = header[7:].strip() if header.lower().startswith("bearer ") else ""
     if not token or _jwks is None:
-        if REQUIRE_AUTH:
+        if REQUIRE_AUTH and not allow_guest:
             raise HTTPException(status_code=401, detail="Sign in to chat with TerpGuide.")
         return None
     try:
